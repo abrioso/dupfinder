@@ -1,6 +1,5 @@
 """Tests for dupfinder formatters module."""
 
-
 import pytest
 
 from dupfinder.formatters import format_csv, format_json, format_output, format_table
