@@ -39,7 +39,7 @@ dev = [
 ]
 
 [project.scripts]
-dupfinder = "dupfinder.__main__:main"
+dupfinder = "dupfinder.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
