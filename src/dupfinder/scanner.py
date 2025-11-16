@@ -392,10 +392,11 @@ class DuplicateFinder:
                     logger.info(f"Would hardlink: {filepath} -> {original}")
                 else:
                     try:
-                        # Remove the duplicate
-                        filepath.unlink()
-                        # Create hardlink
-                        os.link(original, filepath)
+                        # Create hardlink with temporary name
+                        temp_path = filepath.with_suffix(filepath.suffix + '.tmp')
+                        os.link(original, temp_path)
+                        # Atomically replace the original file
+                        temp_path.replace(filepath)
                         logger.info(f"Hardlinked: {filepath} -> {original}")
                     except OSError as e:
                         logger.error(f"Cannot hardlink {filepath}: {e}")
