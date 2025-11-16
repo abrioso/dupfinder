@@ -370,14 +370,15 @@ class DuplicateFinder:
             for filepath in file_list[1:]:
                 if dry_run:
                     logger.info(f"Would delete: {filepath}")
+                    count += 1
                 else:
                     try:
                         filepath.unlink()
                         logger.info(f"Deleted: {filepath}")
+                        count += 1
                     except OSError as e:
                         logger.error(f"Cannot delete {filepath}: {e}")
                         continue
-                count += 1
         return count
 
     def hardlink_duplicates(self, duplicates: dict[str, list[Path]], dry_run: bool = True) -> int:
