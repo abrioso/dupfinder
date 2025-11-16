@@ -215,6 +215,46 @@ class TestDuplicateFinder:
         # They should have the same inode (hardlinked)
         assert file1.stat().st_ino == file2.stat().st_ino
 
+    def test_hardlink_duplicates_already_hardlinked(self, tmp_path):
+        """Test hardlinking when files are already hardlinked."""
+        import os
+
+        # Create a file and a hardlink to it
+        content = "duplicate"
+        file1 = tmp_path / "file1.txt"
+        file1.write_text(content)
+        file2 = tmp_path / "file2.txt"
+        file3 = tmp_path / "file3.txt"
+        file3.write_text(content)
+
+        # Create hardlink from file1 to file2
+        os.link(file1, file2)
+
+        # Verify they're already hardlinked
+        assert file1.stat().st_ino == file2.stat().st_ino
+
+        finder = DuplicateFinder()
+        duplicates = finder.find_duplicates([tmp_path])
+
+        # Should find the duplicate group
+        assert len(duplicates) == 1
+        dup_group = list(duplicates.values())[0]
+        assert len(dup_group) == 3
+
+        # Hardlink operation should skip the already-hardlinked file (file2)
+        # and only hardlink file3, so count should be 1
+        count = finder.hardlink_duplicates(duplicates, dry_run=False)
+
+        assert count == 1  # Only file3 was hardlinked
+        # All files should exist
+        assert file1.exists()
+        assert file2.exists()
+        assert file3.exists()
+
+        # All should have the same inode now
+        assert file1.stat().st_ino == file2.stat().st_ino
+        assert file2.stat().st_ino == file3.stat().st_ino
+
     def test_collect_files_single_file(self, tmp_path):
         """Test collecting a single file."""
         test_file = tmp_path / "test.txt"

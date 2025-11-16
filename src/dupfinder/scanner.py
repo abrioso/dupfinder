@@ -400,8 +400,13 @@ class DuplicateFinder:
                     logger.info(f"Would hardlink: {filepath} -> {original}")
                 else:
                     try:
+                        # Skip if files are already hardlinked
+                        if filepath.stat().st_ino == original.stat().st_ino:
+                            logger.debug(f"Skipping {filepath}: already hardlinked to {original}")
+                            continue
+
                         # Create hardlink with temporary name
-                        temp_path = filepath.with_suffix(filepath.suffix + '.tmp')
+                        temp_path = filepath.with_suffix(filepath.suffix + ".tmp")
                         os.link(original, temp_path)
                         # Atomically replace the original file
                         temp_path.replace(filepath)
