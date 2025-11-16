@@ -157,6 +157,7 @@ class DuplicateFinder:
                 if self.pathspec.match_file(str(rel_path)):
                     return False
             except ValueError:
+                # File is not relative to root_path; skip exclusion check
                 pass
 
         return True
