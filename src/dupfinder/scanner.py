@@ -213,14 +213,20 @@ class DuplicateFinder:
                     # Check .gitignore
                     if self.respect_gitignore and gitignore_specs:
                         excluded = False
-                        for git_root, spec in gitignore_specs.items():
-                            try:
-                                rel_path = filepath.relative_to(git_root)
-                                if spec.match_file(str(rel_path)):
-                                    excluded = True
-                                    break
-                            except ValueError:
-                                continue
+                        # Start from current directory and work up to the scan root
+                        check_path = root_path
+                        while True:
+                            if check_path in gitignore_specs:
+                                try:
+                                    rel_path = filepath.relative_to(check_path)
+                                    if gitignore_specs[check_path].match_file(str(rel_path)):
+                                        excluded = True
+                                        break
+                                except ValueError:
+                                    pass
+                            if check_path == path:
+                                break
+                            check_path = check_path.parent
                         if excluded:
                             continue
 
