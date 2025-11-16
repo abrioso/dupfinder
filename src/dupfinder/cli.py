@@ -154,6 +154,17 @@ def main() -> int:
     logger = logging.getLogger(__name__)
 
     try:
+        # Validate size arguments
+        if args.min_size < 0:
+            logger.error("--min-size must be non-negative")
+            return 1
+        if args.max_size is not None and args.max_size < 0:
+            logger.error("--max-size must be non-negative")
+            return 1
+        if args.max_size is not None and args.min_size > args.max_size:
+            logger.error("--min-size cannot be greater than --max-size")
+            return 1
+
         # Validate paths
         for path in args.paths:
             if not path.exists():
