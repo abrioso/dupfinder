@@ -1,6 +1,5 @@
 """File scanning and duplicate detection logic - minimal stub for testing."""
 
-import hashlib
 import logging
 from pathlib import Path
 from typing import Optional
