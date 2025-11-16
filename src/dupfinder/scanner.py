@@ -345,7 +345,7 @@ class DuplicateFinder:
 
         # Filter to only actual duplicates
         duplicates = {
-            hash_val: sorted(file_list, key=lambda p: str(p))
+            hash_val: sorted(file_list, key=str)
             for hash_val, file_list in full_hash_groups.items()
             if len(file_list) > 1
         }
