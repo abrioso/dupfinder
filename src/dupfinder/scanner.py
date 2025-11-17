@@ -396,15 +396,19 @@ class DuplicateFinder:
         for hash_val, file_list in duplicates.items():
             original = file_list[0]
             for filepath in file_list[1:]:
+                # Check if files are already hardlinked (same inode)
+                try:
+                    if original.stat().st_ino == filepath.stat().st_ino:
+                        logger.debug(f"Skipping already hardlinked: {filepath} -> {original}")
+                        continue
+                except OSError as e:
+                    logger.warning(f"Cannot stat {filepath}: {e}")
+                    continue
+
                 if dry_run:
                     logger.info(f"Would hardlink: {filepath} -> {original}")
                 else:
                     try:
-                        # Skip if files are already hardlinked
-                        if filepath.stat().st_ino == original.stat().st_ino:
-                            logger.debug(f"Skipping {filepath}: already hardlinked to {original}")
-                            continue
-
                         # Create hardlink with temporary name
                         temp_path = filepath.with_suffix(filepath.suffix + f".tmp.{os.getpid()}")
                         os.link(original, temp_path)
