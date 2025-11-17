@@ -406,7 +406,7 @@ class DuplicateFinder:
                             continue
 
                         # Create hardlink with temporary name
-                        temp_path = filepath.with_suffix(filepath.suffix + ".tmp")
+                        temp_path = filepath.with_suffix(filepath.suffix + f".tmp.{os.getpid()}")
                         os.link(original, temp_path)
                         # Atomically replace the original file
                         temp_path.replace(filepath)
