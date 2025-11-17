@@ -202,9 +202,10 @@ The pre-commit hooks will automatically:
 ## Common Patterns
 
 ### Chunked Hashing
-The project uses a two-stage hashing approach for efficiency:
-1. Hash first chunk (8KB) to quickly eliminate non-duplicates
-2. Hash full file only for files with matching chunk hashes
+The project uses a three-stage hashing approach for efficiency:
+1. Group files by size to quickly eliminate non-duplicates and avoid unnecessary hashing
+2. Hash first chunk (8KB) for files with duplicate sizes to further filter candidates
+3. Hash full file only for files with matching chunk hashes to confirm duplicates
 
 ```python
 # Example pattern used in scanner.py
