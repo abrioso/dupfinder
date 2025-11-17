@@ -69,7 +69,7 @@ class TestCLI:
         args = parse_args([str(tmp_path), "--output-file", str(output_file)])
         assert args.output_file == output_file
 
-    def test_main_no_duplicates(self, tmp_path, capsys):
+    def test_main_no_duplicates(self, tmp_path):
         """Test main with no duplicates."""
         # Create unique files
         file1 = tmp_path / "file1.txt"
