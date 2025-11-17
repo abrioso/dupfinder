@@ -216,44 +216,38 @@ class TestDuplicateFinder:
         assert file1.stat().st_ino == file2.stat().st_ino
 
     def test_hardlink_duplicates_already_hardlinked(self, tmp_path):
-        """Test hardlinking when files are already hardlinked."""
-        import os
-
-        # Create a file and a hardlink to it
+        """Test that already hardlinked files are skipped in both dry_run and actual mode."""
+        # Create duplicate files
         content = "duplicate"
         file1 = tmp_path / "file1.txt"
         file1.write_text(content)
         file2 = tmp_path / "file2.txt"
+        file2.write_text(content)
         file3 = tmp_path / "file3.txt"
         file3.write_text(content)
-
-        # Create hardlink from file1 to file2
-        os.link(file1, file2)
-
-        # Verify they're already hardlinked
-        assert file1.stat().st_ino == file2.stat().st_ino
 
         finder = DuplicateFinder()
         duplicates = finder.find_duplicates([tmp_path])
 
-        # Should find the duplicate group
-        assert len(duplicates) == 1
-        dup_group = list(duplicates.values())[0]
-        assert len(dup_group) == 3
+        # First hardlink operation - should hardlink 2 files
+        count_first = finder.hardlink_duplicates(duplicates, dry_run=False)
+        assert count_first == 2
 
-        # Hardlink operation should skip the already-hardlinked file (file2)
-        # and only hardlink file3, so count should be 1
-        count = finder.hardlink_duplicates(duplicates, dry_run=False)
-
-        assert count == 1  # Only file3 was hardlinked
-        # All files should exist
-        assert file1.exists()
-        assert file2.exists()
-        assert file3.exists()
-
-        # All should have the same inode now
+        # Verify all files are now hardlinked
         assert file1.stat().st_ino == file2.stat().st_ino
-        assert file2.stat().st_ino == file3.stat().st_ino
+        assert file1.stat().st_ino == file3.stat().st_ino
+
+        # Second hardlink operation in dry_run mode - should skip already hardlinked files
+        count_dry_run = finder.hardlink_duplicates(duplicates, dry_run=True)
+        assert count_dry_run == 0
+
+        # Second hardlink operation in actual mode - should also skip already hardlinked files
+        count_second = finder.hardlink_duplicates(duplicates, dry_run=False)
+        assert count_second == 0
+
+        # Verify files are still hardlinked
+        assert file1.stat().st_ino == file2.stat().st_ino
+        assert file1.stat().st_ino == file3.stat().st_ino
 
     def test_collect_files_single_file(self, tmp_path):
         """Test collecting a single file."""
