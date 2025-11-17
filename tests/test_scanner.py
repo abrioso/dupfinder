@@ -215,6 +215,40 @@ class TestDuplicateFinder:
         # They should have the same inode (hardlinked)
         assert file1.stat().st_ino == file2.stat().st_ino
 
+    def test_hardlink_duplicates_already_hardlinked(self, tmp_path):
+        """Test that already hardlinked files are skipped in both dry_run and actual mode."""
+        # Create duplicate files
+        content = "duplicate"
+        file1 = tmp_path / "file1.txt"
+        file1.write_text(content)
+        file2 = tmp_path / "file2.txt"
+        file2.write_text(content)
+        file3 = tmp_path / "file3.txt"
+        file3.write_text(content)
+
+        finder = DuplicateFinder()
+        duplicates = finder.find_duplicates([tmp_path])
+
+        # First hardlink operation - should hardlink 2 files
+        count_first = finder.hardlink_duplicates(duplicates, dry_run=False)
+        assert count_first == 2
+
+        # Verify all files are now hardlinked
+        assert file1.stat().st_ino == file2.stat().st_ino
+        assert file1.stat().st_ino == file3.stat().st_ino
+
+        # Second hardlink operation in dry_run mode - should skip already hardlinked files
+        count_dry_run = finder.hardlink_duplicates(duplicates, dry_run=True)
+        assert count_dry_run == 0
+
+        # Second hardlink operation in actual mode - should also skip already hardlinked files
+        count_second = finder.hardlink_duplicates(duplicates, dry_run=False)
+        assert count_second == 0
+
+        # Verify files are still hardlinked
+        assert file1.stat().st_ino == file2.stat().st_ino
+        assert file1.stat().st_ino == file3.stat().st_ino
+
     def test_collect_files_single_file(self, tmp_path):
         """Test collecting a single file."""
         test_file = tmp_path / "test.txt"
