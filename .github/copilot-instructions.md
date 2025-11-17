@@ -2,7 +2,7 @@
 
 ## Project Overview
 
-dupfinder is a cross-platform CLI tool for finding duplicate files using chunked hashing (BLAKE2/xxhash). The project is built with Python and focuses on performance, accuracy, and user-friendly output.
+dupfinder is a cross-platform CLI tool for finding duplicate files using chunked hashing (blake2/xxhash). The project is built with Python and focuses on performance, accuracy, and user-friendly output.
 
 **Key Features:**
 - Fast chunked hashing for efficient duplicate detection
