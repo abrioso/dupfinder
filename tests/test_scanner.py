@@ -1,6 +1,8 @@
 """Tests for dupfinder scanner module."""
 
 import hashlib
+import os
+from unittest.mock import patch
 
 from dupfinder.scanner import DuplicateFinder
 
@@ -248,6 +250,38 @@ class TestDuplicateFinder:
         # Verify files are still hardlinked
         assert file1.stat().st_ino == file2.stat().st_ino
         assert file1.stat().st_ino == file3.stat().st_ino
+
+    def test_hardlink_duplicates_failure_does_not_increment_count(self, tmp_path):
+        """Test that failed hardlink operations don't increment the count."""
+        # Create duplicate files
+        content = "duplicate"
+        file1 = tmp_path / "file1.txt"
+        file1.write_text(content)
+        file2 = tmp_path / "file2.txt"
+        file2.write_text(content)
+        file3 = tmp_path / "file3.txt"
+        file3.write_text(content)
+
+        finder = DuplicateFinder()
+        duplicates = finder.find_duplicates([tmp_path])
+
+        # Mock os.link to raise OSError for file2, succeed for file3
+        original_link = os.link
+        call_count = [0]
+
+        def mock_link(src, dst):
+            call_count[0] += 1
+            # Fail on first call (file2), succeed on second (file3)
+            if call_count[0] == 1:
+                raise OSError("Permission denied")
+            return original_link(src, dst)
+
+        with patch("os.link", side_effect=mock_link):
+            count = finder.hardlink_duplicates(duplicates, dry_run=False)
+
+        # Count should only be 1 (file3 succeeded, file2 failed)
+        # With the bug, count would be 2
+        assert count == 1
 
     def test_collect_files_single_file(self, tmp_path):
         """Test collecting a single file."""
