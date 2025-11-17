@@ -407,6 +407,7 @@ class DuplicateFinder:
 
                 if dry_run:
                     logger.info(f"Would hardlink: {filepath} -> {original}")
+                    count += 1
                 else:
                     try:
                         # Create hardlink with temporary name
@@ -415,8 +416,7 @@ class DuplicateFinder:
                         # Atomically replace the original file
                         temp_path.replace(filepath)
                         logger.info(f"Hardlinked: {filepath} -> {original}")
+                        count += 1
                     except OSError as e:
                         logger.error(f"Cannot hardlink {filepath}: {e}")
-                        continue
-                count += 1
         return count
