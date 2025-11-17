@@ -228,7 +228,7 @@ Use `ThreadPoolExecutor` for I/O-bound operations:
 
 ```python
 with ThreadPoolExecutor(max_workers=self.num_threads) as executor:
-    futures = {executor.submit(process_file, f): f for f in files}
+    futures = {executor.submit(self._hash_file_chunk, f): f for f in files}
     for future in as_completed(futures):
         result = future.result()
 ```
