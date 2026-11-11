@@ -259,6 +259,8 @@ validated changes to `main`.
 Black and Ruff are pinned to the same versions in `pyproject.toml` and
 `.pre-commit-config.yaml`; update both files together when upgrading these tools.
 The test suite enforces a minimum total coverage of 80%.
+Linux CI uses Ubuntu 24.04 because `setup-python` does not provide Python 3.9
+for Ubuntu 26.04. Review this runner pin when changing the supported Python versions.
 
 This project uses pre-commit hooks to ensure code quality:
 
