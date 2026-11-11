@@ -128,11 +128,11 @@ def test_find_duplicates_with_duplicates(self, tmp_path):
     file2 = tmp_path / "file2.txt"
     file1.write_text("duplicate content")
     file2.write_text("duplicate content")
-    
+
     # Act - Find duplicates
     finder = DuplicateFinder()
     duplicates = finder.find_duplicates([tmp_path])
-    
+
     # Assert - Verify results
     assert len(duplicates) == 1
     assert len(list(duplicates.values())[0]) == 2
