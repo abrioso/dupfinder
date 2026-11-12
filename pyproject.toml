@@ -4,10 +4,10 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "dupfinder"
-version = "0.1.0"
+version = "0.2.0"
 description = "A cross-platform CLI tool to find duplicate files using chunked hashing"
 readme = "README.md"
-requires-python = ">=3.9"
+requires-python = ">=3.12"
 license = {text = "MIT"}
 authors = [
     {name = "dupfinder contributors"}
@@ -18,10 +18,10 @@ classifiers = [
     "License :: OSI Approved :: MIT License",
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.9",
-    "Programming Language :: Python :: 3.10",
-    "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Programming Language :: Python :: 3.15",
     "Topic :: System :: Filesystems",
 ]
 dependencies = [
@@ -30,11 +30,14 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = [
+test = [
     "pytest>=7.0.0",
     "pytest-cov>=4.0.0",
+]
+dev = [
+    "dupfinder[test]",
     # Keep these versions aligned with .pre-commit-config.yaml.
-    "black==23.12.1",
+    "black==26.10.1",
     "ruff==0.1.9",
     "pre-commit>=3.0.0",
 ]
@@ -47,11 +50,11 @@ where = ["src"]
 
 [tool.black]
 line-length = 100
-target-version = ['py39']
+target-version = ['py312']
 
 [tool.ruff]
 line-length = 100
-target-version = "py39"
+target-version = "py312"
 src = ["src"]
 
 [tool.ruff.lint]
