@@ -4,7 +4,6 @@ import argparse
 import logging
 import sys
 from pathlib import Path
-from typing import Optional
 
 from dupfinder.formatters import format_output
 from dupfinder.scanner import DuplicateFinder
@@ -24,7 +23,7 @@ def setup_logging(verbose: bool) -> None:
     )
 
 
-def parse_args(args: Optional[list[str]] = None) -> argparse.Namespace:
+def parse_args(args: list[str] | None = None) -> argparse.Namespace:
     """Parse command-line arguments.
 
     Args:
