@@ -6,7 +6,6 @@ import os
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
-from typing import Optional
 
 try:
     import xxhash
@@ -30,8 +29,8 @@ class DuplicateFinder:
         self,
         hash_algo: str = "xxhash",
         min_size: int = 0,
-        max_size: Optional[int] = None,
-        exclude_patterns: Optional[list[str]] = None,
+        max_size: int | None = None,
+        exclude_patterns: list[str] | None = None,
         respect_gitignore: bool = False,
         follow_symlinks: bool = False,
         num_threads: int = 4,
@@ -162,7 +161,7 @@ class DuplicateFinder:
 
         return True
 
-    def _load_gitignore(self, directory: Path) -> Optional[pathspec.PathSpec]:
+    def _load_gitignore(self, directory: Path) -> pathspec.PathSpec | None:
         """Load .gitignore patterns from a directory.
 
         Args:

@@ -35,8 +35,9 @@ dupfinder/
 ## Code Guidelines
 
 ### Python Version
-- Target Python 3.9+ (minimum supported version)
-- Use modern Python features available in 3.9+
+- Target Python 3.12+ (minimum supported version)
+- Use Python 3.13 for development and quality tools, as recorded in `.python-version`
+- Keep syntax and APIs compatible with Python 3.12; test Python 3.12 through 3.15
 - Type hints are required for all function signatures
 
 ### Code Style
@@ -143,6 +144,7 @@ def test_find_duplicates_with_duplicates(self, tmp_path):
 ### Installation
 ```bash
 # Install in development mode
+# Use an activated Python 3.13 virtual environment.
 pip install -e ".[dev]"
 
 # Install pre-commit hooks
@@ -266,14 +268,18 @@ Always implement new formatters in `formatters.py` and add corresponding tests.
 ### Development
 - `pytest>=7.0.0`: Testing framework
 - `pytest-cov>=4.0.0`: Coverage reporting
-- `black>=23.0.0`: Code formatter
-- `ruff>=0.1.0`: Fast Python linter
+- `black==26.10.1`: Code formatter (Python 3.12 syntax target)
+- `ruff==0.1.9`: Fast Python linter (Python 3.12 syntax target)
 - `pre-commit>=3.0.0`: Pre-commit hook management
+
+Keep formatter and linter versions aligned with `.pre-commit-config.yaml`. All
+Python hooks use Python 3.13. The `test` extra contains pytest and pytest-cov for
+the runtime compatibility matrix; the `dev` extra includes `test` plus quality tools.
 
 ### Adding New Dependencies
 1. Add to `pyproject.toml` under appropriate section
 2. Update documentation if user-facing
-3. Ensure compatibility with Python 3.9+
+3. Ensure runtime and test dependencies support Python 3.12+; quality tools run on Python 3.13
 4. Consider platform compatibility (Windows, macOS, Linux)
 
 ## CLI Design

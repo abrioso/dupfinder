@@ -4,7 +4,7 @@ A cross-platform CLI tool to find duplicate files using chunked hashing (BLAKE2/
 
 [![CI](https://github.com/abrioso/dupfinder/workflows/CI/badge.svg)](https://github.com/abrioso/dupfinder/actions)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Python 3.9+](https://img.shields.io/badge/python-3.9+-blue.svg)](https://www.python.org/downloads/)
+[![Python 3.12+](https://img.shields.io/badge/python-3.12+-blue.svg)](https://www.python.org/downloads/)
 
 ## Features
 
@@ -21,10 +21,12 @@ A cross-platform CLI tool to find duplicate files using chunked hashing (BLAKE2/
 
 ### From source
 
+Use an activated virtual environment with Python 3.12 or newer.
+
 ```bash
 git clone https://github.com/abrioso/dupfinder.git
 cd dupfinder
-pip install -e ".[dev]"
+python -m pip install -e .
 ```
 
 ### Using pip (once published)
@@ -215,16 +217,42 @@ a1b2c3d4e5f6,/path/to/file2.txt,2
 
 ## Development
 
+### Python support policy
+
+- Minimum runtime: **Python 3.12**.
+- Reference interpreter for development and quality tools: **Python 3.13**,
+  recorded in `.python-version`. Install a current 3.13 patch release.
+- CI tests Python **3.12, 3.13, 3.14, and 3.15** on Linux, macOS, and Windows.
+- Black and Ruff target **Python 3.12** syntax. Code must not rely on features
+  exclusive to newer interpreters while 3.12 remains supported.
+- Version **0.2.0** drops Python 3.9, 3.10, and 3.11 support. Upgrade the interpreter
+  before installing this version.
+
+Review this policy when adopting a new stable Python release; compatibility with
+future versions is only confirmed after their CI jobs pass.
+
 ### Setup development environment
+
+On Linux or macOS:
 
 ```bash
 git clone https://github.com/abrioso/dupfinder.git
 cd dupfinder
-pip install -e ".[dev]"
+python3.13 -m venv .venv
+source .venv/bin/activate
+python -m pip install -e ".[dev]"
 pre-commit install
 ```
 
+On Windows, after cloning the repository, create and activate the environment in
+PowerShell with `py -3.13 -m venv .venv` and `.\.venv\Scripts\Activate.ps1`, then run
+the same installation and `pre-commit install` commands. Keep Python 3.13 available
+for the hooks even when testing the application with another supported interpreter.
+
 ### Run tests
+
+The `dev` extra includes the `test` extra. For a test-only environment on any
+supported interpreter, install `python -m pip install -e ".[test]"`.
 
 ```bash
 pytest
@@ -258,9 +286,9 @@ validated changes to `main`.
 
 Black and Ruff are pinned to the same versions in `pyproject.toml` and
 `.pre-commit-config.yaml`; update both files together when upgrading these tools.
-The test suite enforces a minimum total coverage of 80%.
-Linux CI uses Ubuntu 24.04 because `setup-python` does not provide Python 3.9
-for Ubuntu 26.04. Review this runner pin when changing the supported Python versions.
+The test suite enforces a minimum total coverage of 80%. The test matrix installs
+only the `test` extra; a separate Python 3.13 job runs all quality hooks, including
+Black and Ruff. Linux CI uses Ubuntu 24.04 for a consistent runner baseline.
 
 This project uses pre-commit hooks to ensure code quality:
 
@@ -279,7 +307,7 @@ This approach minimizes I/O by only reading full files when necessary.
 
 ## Requirements
 
-- Python 3.9 or higher
+- Python 3.12 or higher (Python 3.13 recommended for development)
 - xxhash (optional, for faster hashing)
 - pathspec (for .gitignore support)
 
