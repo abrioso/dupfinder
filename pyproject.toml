@@ -34,7 +34,7 @@ dev = [
     "pytest>=7.0.0",
     "pytest-cov>=4.0.0",
     # Keep these versions aligned with .pre-commit-config.yaml.
-    "black==23.12.1",
+    "black==26.10.1",
     "ruff==0.1.9",
     "pre-commit>=3.0.0",
 ]
