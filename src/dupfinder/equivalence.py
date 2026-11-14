@@ -19,6 +19,7 @@ from dupfinder.office import (
     PACKAGE_ERRORS,
     XML_ERRORS,
     is_office_file,
+    package_part_name,
     read_part,
 )
 
@@ -99,7 +100,7 @@ def _metadata_parts(package: zipfile.ZipFile) -> set[str]:
     if root is None:
         return {n for n in package.namelist() if n.startswith(_METADATA_FALLBACK_PREFIX)}
     return {
-        element.get("Target", "").lstrip("/")
+        package_part_name(element.get("Target", ""))
         for element in root
         if element.get("Type", "").endswith(_METADATA_RELATIONSHIP_TYPES)
     }
@@ -126,8 +127,12 @@ def _descriptor_entries(
     for element in root:
         # Relationship ids are arbitrary labels and may be renumbered between saves
         attributes = {k: v for k, v in element.attrib.items() if k != "Id"}
-        location = attributes.get("PartName") or attributes.get("Target") or ""
-        if location.lstrip("/") in metadata:
+        external = attributes.get("TargetMode") == "External"
+        if "Target" in attributes and not external:
+            # Equivalent spellings of a target must not change the signature
+            attributes["Target"] = package_part_name(attributes["Target"])
+        location = attributes.get("PartName") or ("" if external else attributes.get("Target", ""))
+        if package_part_name(location) in metadata:
             continue
         tag = element.tag.rpartition("}")[2]
         entries.append(f"{tag} {sorted(attributes.items())}")
