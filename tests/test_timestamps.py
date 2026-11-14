@@ -83,8 +83,44 @@ class TestCoreProperties:
         assert path.stat().st_size < 10_000
         assert read_core_properties(path) == CoreProperties()
 
+    def test_corrupt_compressed_properties_are_tolerated(self, tmp_path):
+        """A damaged compressed stream yields empty properties instead of an error."""
+        import zipfile
+
+        path = tmp_path / "damaged.docx"
+        with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as package:
+            package.writestr("docProps/core.xml", core_xml_text := "<x>" + "abc" * 500 + "</x>")
+        data = bytearray(path.read_bytes())
+        start = data.index(b"docProps/core.xml") + len("docProps/core.xml")
+        data[start : start + 8] = b"\xff" * 8
+        path.write_bytes(bytes(data))
+
+        assert len(core_xml_text) > 1000
+        assert read_core_properties(path) == CoreProperties()
+
 
 class TestTimestampOutput:
+    def test_unrepresentable_timestamp_keeps_the_size(self, tmp_path, monkeypatch):
+        """A timestamp that cannot be converted does not hide the size or stop the output."""
+        import dupfinder.formatters as formatters
+
+        (tmp_path / "a.txt").write_text("same")
+        (tmp_path / "b.txt").write_text("same")
+        groups = DuplicateFinder().find_duplicates([tmp_path])
+
+        class _Broken:
+            @staticmethod
+            def fromtimestamp(timestamp):
+                raise OverflowError("timestamp out of range")
+
+        monkeypatch.setattr(formatters, "datetime", _Broken)
+
+        details = json.loads(format_json(groups))[0]["details"]
+        assert details[0]["size"] == 4
+        assert details[0]["modified"] is None
+        assert "a.txt" in format_table(groups)
+        assert "a.txt" in format_csv(groups)
+
     """Test cases for timestamps reported by the formatters."""
 
     def _groups(self, tmp_path):
