@@ -3,14 +3,36 @@
 import csv
 import io
 import json
+from collections.abc import Callable
 from pathlib import Path
 
+ReferenceCheck = Callable[[Path], bool]
 
-def format_json(duplicates: dict[str, list[Path]]) -> str:
+
+def _role(index: int, filepath: Path, is_reference: ReferenceCheck | None) -> str:
+    """Describe what happens to a file of a duplicate group.
+
+    Args:
+        index: Position of the file in its group
+        filepath: Path to the file
+        is_reference: Callable telling whether a file is in a reference directory
+
+    Returns:
+        'reference', 'keep' or 'duplicate'
+    """
+    if is_reference is not None and is_reference(filepath):
+        return "reference"
+    return "keep" if index == 0 else "duplicate"
+
+
+def format_json(
+    duplicates: dict[str, list[Path]], is_reference: ReferenceCheck | None = None
+) -> str:
     """Format duplicates as JSON.
 
     Args:
         duplicates: Dictionary mapping hash to list of duplicate paths
+        is_reference: Callable telling whether a file is in a reference directory
 
     Returns:
         JSON string
@@ -18,17 +40,28 @@ def format_json(duplicates: dict[str, list[Path]]) -> str:
     result = []
     for hash_val, file_list in duplicates.items():
         result.append(
-            {"hash": hash_val, "count": len(file_list), "files": [str(f) for f in file_list]}
+            {
+                "hash": hash_val,
+                "count": len(file_list),
+                "files": [str(f) for f in file_list],
+                "details": [
+                    {"path": str(f), "role": _role(i, f, is_reference)}
+                    for i, f in enumerate(file_list)
+                ],
+            }
         )
 
     return json.dumps(result, indent=2)
 
 
-def format_csv(duplicates: dict[str, list[Path]]) -> str:
+def format_csv(
+    duplicates: dict[str, list[Path]], is_reference: ReferenceCheck | None = None
+) -> str:
     """Format duplicates as CSV.
 
     Args:
         duplicates: Dictionary mapping hash to list of duplicate paths
+        is_reference: Callable telling whether a file is in a reference directory
 
     Returns:
         CSV string
@@ -37,22 +70,25 @@ def format_csv(duplicates: dict[str, list[Path]]) -> str:
     writer = csv.writer(output)
 
     # Write header
-    writer.writerow(["hash", "file_path", "group_size"])
+    writer.writerow(["hash", "file_path", "group_size", "role"])
 
     # Write data
     for hash_val, file_list in duplicates.items():
         group_size = len(file_list)
-        for filepath in file_list:
-            writer.writerow([hash_val, str(filepath), group_size])
+        for i, filepath in enumerate(file_list):
+            writer.writerow([hash_val, str(filepath), group_size, _role(i, filepath, is_reference)])
 
     return output.getvalue()
 
 
-def format_table(duplicates: dict[str, list[Path]]) -> str:
+def format_table(
+    duplicates: dict[str, list[Path]], is_reference: ReferenceCheck | None = None
+) -> str:
     """Format duplicates as human-readable table.
 
     Args:
         duplicates: Dictionary mapping hash to list of duplicate paths
+        is_reference: Callable telling whether a file is in a reference directory
 
     Returns:
         Formatted table string
@@ -81,8 +117,10 @@ def format_table(duplicates: dict[str, list[Path]]) -> str:
         lines.append(f"Hash: {hash_val}")
         lines.append(f"Wasted space: {_format_size(wasted_space)}")
 
-        for filepath in file_list:
-            lines.append(f"  - {filepath}")
+        for index, filepath in enumerate(file_list):
+            role = _role(index, filepath, is_reference)
+            marker = "" if role == "duplicate" else f" [{role}]"
+            lines.append(f"  - {filepath}{marker}")
 
     # Add summary
     lines.append("\n" + "=" * 80)
@@ -110,21 +148,26 @@ def _format_size(size: int) -> str:
     return f"{size:.2f} PB"
 
 
-def format_output(duplicates: dict[str, list[Path]], format_type: str = "table") -> str:
+def format_output(
+    duplicates: dict[str, list[Path]],
+    format_type: str = "table",
+    is_reference: ReferenceCheck | None = None,
+) -> str:
     """Format duplicate results in the specified format.
 
     Args:
         duplicates: Dictionary mapping hash to list of duplicate paths
         format_type: Output format ('json', 'csv', or 'table')
+        is_reference: Callable telling whether a file is in a reference directory
 
     Returns:
         Formatted output string
     """
     if format_type == "json":
-        return format_json(duplicates)
+        return format_json(duplicates, is_reference)
     elif format_type == "csv":
-        return format_csv(duplicates)
+        return format_csv(duplicates, is_reference)
     elif format_type == "table":
-        return format_table(duplicates)
+        return format_table(duplicates, is_reference)
     else:
         raise ValueError(f"Unknown format type: {format_type}")

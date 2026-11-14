@@ -18,6 +18,8 @@ import pathspec
 
 logger = logging.getLogger(__name__)
 
+KEEP_POLICIES = ("first", "oldest", "newest", "shortest-path")
+
 
 class DuplicateFinder:
     """Find duplicate files using chunked hashing."""
@@ -34,6 +36,8 @@ class DuplicateFinder:
         respect_gitignore: bool = False,
         follow_symlinks: bool = False,
         num_threads: int = 4,
+        reference_paths: list[Path] | None = None,
+        keep: str = "first",
     ):
         """Initialize the duplicate finder.
 
@@ -45,7 +49,16 @@ class DuplicateFinder:
             respect_gitignore: Whether to respect .gitignore files
             follow_symlinks: Whether to follow symbolic links
             num_threads: Number of threads for parallel processing
+            reference_paths: Directories whose files are always kept and never modified
+            keep: Which file of a group to keep when no reference file settles it
+                ('first', 'oldest', 'newest' or 'shortest-path')
+
+        Raises:
+            ValueError: If keep is not a known policy
         """
+        if keep not in KEEP_POLICIES:
+            raise ValueError(f"Unknown keep policy: {keep}")
+
         if hash_algo == "xxhash" and not HAS_XXHASH:
             logger.warning("xxhash not available, falling back to blake2")
             hash_algo = "blake2"
@@ -57,6 +70,16 @@ class DuplicateFinder:
         self.respect_gitignore = respect_gitignore
         self.follow_symlinks = follow_symlinks
         self.num_threads = num_threads
+        # Paths as given are used for scanning, so reports show them the way the user wrote
+        # them; resolved paths are used to decide whether a file is protected
+        self._reference_scan_paths = list(reference_paths or [])
+        self.reference_paths = [self._resolve(p) for p in self._reference_scan_paths]
+        # A symlink inside a reference directory is protected even if it points elsewhere,
+        # so membership is also checked on the path as written
+        self._reference_roots = set(self.reference_paths) | {
+            Path(os.path.abspath(p)) for p in self._reference_scan_paths
+        }
+        self.keep = keep
 
         # Create pathspec for exclusion patterns
         self.pathspec = (
@@ -66,6 +89,66 @@ class DuplicateFinder:
             if self.exclude_patterns
             else None
         )
+
+    @staticmethod
+    def _resolve(path: Path) -> Path:
+        """Resolve a path, falling back to its absolute form if it cannot be resolved.
+
+        Args:
+            path: Path to resolve
+
+        Returns:
+            Resolved (or absolute) path
+        """
+        try:
+            return path.resolve()
+        except OSError:
+            return path.absolute()
+
+    def is_reference(self, filepath: Path) -> bool:
+        """Check whether a file lives inside one of the reference directories.
+
+        Args:
+            filepath: Path to the file
+
+        Returns:
+            True if the file is protected by a reference directory
+        """
+        if not self.reference_paths:
+            return False
+        locations = {self._resolve(filepath), Path(os.path.abspath(filepath))}
+        return any(
+            root == location or root in location.parents
+            for location in locations
+            for root in self._reference_roots
+        )
+
+    def order_group(self, files: list[Path]) -> list[Path]:
+        """Order a group of matching files so that the file to keep comes first.
+
+        Reference files always sort before the others. Remaining ties are settled by the
+        keep policy and finally by path, so the result is deterministic.
+
+        Args:
+            files: Files belonging to the same group
+
+        Returns:
+            Files sorted with the one to keep in first position
+        """
+
+        def sort_key(filepath: Path) -> tuple[int, float, str]:
+            criterion = 0.0
+            if self.keep in ("oldest", "newest"):
+                try:
+                    mtime = filepath.stat().st_mtime
+                except OSError:
+                    mtime = float("inf") if self.keep == "oldest" else float("-inf")
+                criterion = mtime if self.keep == "oldest" else -mtime
+            elif self.keep == "shortest-path":
+                criterion = float(len(filepath.parts) * 100_000 + len(str(filepath)))
+            return (0 if self.is_reference(filepath) else 1, criterion, str(filepath))
+
+        return sorted(files, key=sort_key)
 
     def _hash_file_chunk(self, filepath: Path, chunk_size: int = CHUNK_SIZE) -> str:
         """Hash the first chunk of a file.
@@ -257,7 +340,16 @@ class DuplicateFinder:
             else:
                 logger.warning(f"Skipping {path}: not a file or directory")
 
-        return all_files
+        # Overlapping scan paths must not report a file as a duplicate of itself
+        seen: set[Path] = set()
+        unique_files = []
+        for filepath in all_files:
+            resolved = self._resolve(filepath)
+            if resolved not in seen:
+                seen.add(resolved)
+                unique_files.append(filepath)
+
+        return unique_files
 
     def find_duplicates(self, paths: list[Path]) -> dict[str, list[Path]]:
         """Find duplicate files in the given paths.
@@ -269,7 +361,8 @@ class DuplicateFinder:
             Dictionary mapping hash to list of duplicate file paths
         """
         logger.info("Collecting files...")
-        files = self._collect_files(paths)
+        # Reference directories are always part of the scan
+        files = self._collect_files([*self._reference_scan_paths, *paths])
         logger.info(f"Found {len(files)} files to process")
 
         if not files:
@@ -345,7 +438,7 @@ class DuplicateFinder:
 
         # Filter to only actual duplicates
         duplicates = {
-            hash_val: sorted(file_list, key=str)
+            hash_val: self.order_group(file_list)
             for hash_val, file_list in full_hash_groups.items()
             if len(file_list) > 1
         }
@@ -356,6 +449,8 @@ class DuplicateFinder:
 
     def delete_duplicates(self, duplicates: dict[str, list[Path]], dry_run: bool = True) -> int:
         """Delete duplicate files, keeping the first occurrence.
+
+        Files inside reference directories are never deleted.
 
         Args:
             duplicates: Dictionary of duplicate file groups
@@ -368,6 +463,9 @@ class DuplicateFinder:
         for hash_val, file_list in duplicates.items():
             # Keep first file, delete the rest
             for filepath in file_list[1:]:
+                if self.is_reference(filepath):
+                    logger.debug(f"Skipping reference file: {filepath}")
+                    continue
                 if dry_run:
                     logger.info(f"Would delete: {filepath}")
                     count += 1
@@ -384,6 +482,8 @@ class DuplicateFinder:
     def hardlink_duplicates(self, duplicates: dict[str, list[Path]], dry_run: bool = True) -> int:
         """Replace duplicate files with hardlinks to the first occurrence.
 
+        Files inside reference directories are never replaced.
+
         Args:
             duplicates: Dictionary of duplicate file groups
             dry_run: If True, don't actually create hardlinks
@@ -395,6 +495,9 @@ class DuplicateFinder:
         for hash_val, file_list in duplicates.items():
             original = file_list[0]
             for filepath in file_list[1:]:
+                if self.is_reference(filepath):
+                    logger.debug(f"Skipping reference file: {filepath}")
+                    continue
                 # Check if files are already hardlinked (same inode)
                 try:
                     if original.stat().st_ino == filepath.stat().st_ino:
@@ -411,7 +514,9 @@ class DuplicateFinder:
                     try:
                         # Create hardlink with temporary name
                         temp_path = filepath.with_suffix(filepath.suffix + f".tmp.{os.getpid()}")
-                        os.link(original, temp_path)
+                        # Link to the real file: if the kept file is a symlink, linking it
+                        # as written would turn the duplicate into another symlink
+                        os.link(self._resolve(original), temp_path)
                         # Atomically replace the original file
                         temp_path.replace(filepath)
                         logger.info(f"Hardlinked: {filepath} -> {original}")
