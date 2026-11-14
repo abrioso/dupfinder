@@ -174,10 +174,12 @@ How each level works:
 
 - **Level 1** reads only the ZIP directory of each file (name, CRC and size of each part)
   and ignores `docProps/`, so it adds almost no scan time.
-- **Level 2** extracts the text and compares its hash. Word text includes notes, headers
-  and footers; PowerPoint text includes speaker notes; Excel text is the sheet names and
-  cells in order, with formulas reported instead of their cached results, so two workbooks
-  with the same values but different formulas are *not* level 2.
+- **Level 2** extracts the text and compares its hash. Word text includes notes and the
+  headers and footers each section uses; PowerPoint text includes speaker notes in slide
+  order; Excel text is the sheet names and cells in order, with formulas reported instead
+  of their cached results, so two workbooks with the same values but different formulas
+  are *not* level 2. Sheet, cell and formula boundaries are part of what is compared, so
+  cell text cannot imitate them.
 - **Level 3** compares overlapping sequences of four words and groups documents of the
   same type whose similarity reaches the threshold. Each file shows its similarity to the
   first file of the group. For long documents the similarity is an estimate (about ±0.03),

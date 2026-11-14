@@ -25,6 +25,13 @@ _P = "{http://schemas.openxmlformats.org/presentationml/2006/main}"
 _R = "{http://schemas.openxmlformats.org/officeDocument/2006/relationships}"
 _REL = "{http://schemas.openxmlformats.org/package/2006/relationships}"
 
+# Marks structure (sheet names, formulas, header and footer boundaries) in the extracted
+# text. XML 1.0 content cannot contain this character and it is stripped from content
+# anyway, so document text can never be mistaken for structure.
+STRUCTURE = "\x01"
+
+_HEADER_FOOTER_REFERENCES = {f"{_W}headerReference": "header", f"{_W}footerReference": "footer"}
+
 _WHITESPACE = re.compile(r"\s+")
 _NUMBER = re.compile(r"(\d+)")
 
@@ -36,10 +43,17 @@ def _natural_key(name: str) -> list[int | str]:
 
 def _normalize(line: str) -> str:
     """Normalize Unicode form and whitespace of a line of text."""
-    return _WHITESPACE.sub(" ", unicodedata.normalize("NFC", line)).strip()
+    text = unicodedata.normalize("NFC", line).replace(STRUCTURE, "")
+    return _WHITESPACE.sub(" ", text).strip()
 
 
-def _paragraphs(data: bytes, text_tag: str, paragraph_tag: str, break_tags: set[str]) -> list[str]:
+def _paragraphs(
+    data: bytes,
+    text_tag: str,
+    paragraph_tag: str,
+    break_tags: set[str],
+    references: list[tuple[str, str, str]] | None = None,
+) -> list[str]:
     """Extract one line per paragraph from a WordprocessingML or DrawingML part.
 
     Args:
@@ -47,9 +61,11 @@ def _paragraphs(data: bytes, text_tag: str, paragraph_tag: str, break_tags: set[
         text_tag: Qualified tag of text runs
         paragraph_tag: Qualified tag of paragraphs
         break_tags: Qualified tags rendered as a space (tabs, line breaks)
+        references: When given, receives the header and footer references found, in
+            document order, as (kind, type, relationship id)
 
     Returns:
-        Text of each paragraph, in document order
+        Normalized, non-empty text of each paragraph, in document order
     """
     lines: list[str] = []
     buffer: list[str] = []
@@ -60,12 +76,20 @@ def _paragraphs(data: bytes, text_tag: str, paragraph_tag: str, break_tags: set[
         elif tag in break_tags:
             buffer.append(" ")
         elif tag == paragraph_tag:
-            lines.append("".join(buffer))
+            lines.append(_normalize("".join(buffer)))
             buffer.clear()
             element.clear()
+        elif references is not None and tag in _HEADER_FOOTER_REFERENCES:
+            references.append(
+                (
+                    _HEADER_FOOTER_REFERENCES[tag],
+                    element.get(f"{_W}type", ""),
+                    element.get(f"{_R}id", ""),
+                )
+            )
     if buffer:
-        lines.append("".join(buffer))
-    return lines
+        lines.append(_normalize("".join(buffer)))
+    return [line for line in lines if line]
 
 
 def _relationships(package: zipfile.ZipFile, part: str) -> dict[str, str]:
@@ -124,13 +148,30 @@ def _ordered_parts(
 
 
 def _docx_lines(package: zipfile.ZipFile) -> Iterator[str]:
-    """Yield the paragraphs of a Word document, including notes, headers and footers."""
-    names = sorted(package.namelist(), key=_natural_key)
-    extra = re.compile(r"word/(footnotes|endnotes|header\d*|footer\d*)\.xml")
-    for part in ["word/document.xml", *[n for n in names if extra.fullmatch(n)]]:
+    """Yield the paragraphs of a Word document, including notes, headers and footers.
+
+    Headers and footers follow the section references of the document, so the same parts
+    assigned to different sections give different text. Parts that no section references
+    are not rendered by Word and are left out.
+    """
+    tags = (f"{_W}t", f"{_W}p", {f"{_W}tab", f"{_W}br", f"{_W}cr"})
+    references: list[tuple[str, str, str]] = []
+    data = read_part(package, "word/document.xml")
+    if data is not None:
+        yield from _paragraphs(data, *tags, references=references)
+
+    for part in ("word/footnotes.xml", "word/endnotes.xml"):
         data = read_part(package, part)
         if data is not None:
-            yield from _paragraphs(data, f"{_W}t", f"{_W}p", {f"{_W}tab", f"{_W}br", f"{_W}cr"})
+            yield from _paragraphs(data, *tags)
+
+    targets = _relationships(package, "word/document.xml") if references else {}
+    for kind, reference_type, relationship_id in references:
+        data = read_part(package, targets.get(relationship_id, ""))
+        lines = _paragraphs(data, *tags) if data is not None else []
+        if lines:
+            yield f"{STRUCTURE}{kind} {reference_type}"
+            yield from lines
 
 
 def _shared_strings(package: zipfile.ZipFile) -> list[str]:
@@ -161,7 +202,8 @@ def _cell_value(cell: ElementTree.Element, shared: list[str], formulas: dict[str
             updated when the cell is the master of a shared formula
 
     Returns:
-        Text of the cell
+        Normalized text of the cell; formulas carry the structure marker so that a
+        formula and a literal string starting with '=' stay different
     """
     formula = cell.find(f"{_S}f")
     if formula is not None:
@@ -169,32 +211,33 @@ def _cell_value(cell: ElementTree.Element, shared: list[str], formulas: dict[str
         if formula.text:
             if group is not None:
                 formulas[group] = formula.text
-            return "=" + formula.text
+            return f"{STRUCTURE}={_normalize(formula.text)}"
         # Follower of a shared formula: refer to the master's text, because the group
         # identifier is an arbitrary number that differs between saves
-        return f"=shared({formulas.get(group or '', '')})"
+        return f"{STRUCTURE}=shared({_normalize(formulas.get(group or '', ''))})"
     cell_type = cell.get("t")
     if cell_type == "inlineStr":
-        return "".join(t.text or "" for t in cell.iter(f"{_S}t"))
+        return _normalize("".join(t.text or "" for t in cell.iter(f"{_S}t")))
     value = cell.find(f"{_S}v")
     if value is None or value.text is None:
         return ""
     if cell_type == "s":
         try:
-            return shared[int(value.text)]
+            return _normalize(shared[int(value.text)])
         except (ValueError, IndexError):
             return ""
     if cell_type == "b":
         # Booleans are stored as 1/0 but are not the numbers 1 and 0
         return "TRUE" if value.text.strip() == "1" else "FALSE"
-    return value.text
+    return _normalize(value.text)
 
 
 def _xlsx_lines(package: zipfile.ZipFile) -> Iterator[str]:
     """Yield the non-empty rows of a workbook, each sheet preceded by its name.
 
     Sheet names are only emitted for sheets with content, so a workbook of empty sheets
-    yields nothing.
+    yields nothing. Sheet names carry the structure marker and the cells of a row are
+    separated by tabs, so cell text cannot imitate a sheet boundary or a cell boundary.
     """
     shared = _shared_strings(package)
     sheets = _ordered_parts(
@@ -209,10 +252,10 @@ def _xlsx_lines(package: zipfile.ZipFile) -> Iterator[str]:
         for _, element in ElementTree.iterparse(io.BytesIO(data), events=("end",)):
             if element.tag == f"{_S}row":
                 values = [_cell_value(cell, shared, formulas) for cell in element.iter(f"{_S}c")]
-                line = _normalize(" ".join(v for v in values if v))
+                line = "\t".join(v for v in values if v)
                 if line:
                     if header_pending:
-                        yield f"# {name}"
+                        yield f"{STRUCTURE}# {_normalize(name)}".rstrip()
                         header_pending = False
                     yield line
                 element.clear()
@@ -260,7 +303,7 @@ def extract_text(filepath: Path) -> str | None:
 
     try:
         with zipfile.ZipFile(filepath) as package:
-            lines = [_normalize(line) for line in extractor(package)]
+            lines = list(extractor(package))
     except (*PACKAGE_ERRORS, *XML_ERRORS) as e:
         logger.warning(f"Cannot extract text from {filepath}: {e}")
         return None

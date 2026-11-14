@@ -14,6 +14,7 @@ from dupfinder.equivalence import (
     text_sketch,
 )
 from dupfinder.formatters import format_csv, format_json, format_table
+from dupfinder.office_text import STRUCTURE as M
 from dupfinder.office_text import extract_text
 from dupfinder.scanner import DuplicateFinder
 from tests.office_samples import core_xml, make_docx, make_pptx, make_xlsx
@@ -79,7 +80,9 @@ class TestExtractText:
             {"Budget": [["Item", "Cost"], ["Laptop", 1200], ["Total", "=SUM(B2:B2)"]]},
         )
 
-        assert extract_text(path) == "# Budget\nItem Cost\nLaptop 1200\nTotal =SUM(B2:B2)"
+        assert extract_text(path) == (
+            f"{M}# Budget\nItem\tCost\nLaptop\t1200\nTotal\t{M}=SUM(B2:B2)"
+        )
 
     def test_xlsx_same_values_different_formulas_differ(self, tmp_path):
         """A formula and a typed value are different text."""
@@ -103,7 +106,7 @@ class TestExtractText:
             package.writestr("xl/worksheets/sheet10.xml", sheet("ten"))
             package.writestr("xl/worksheets/sheet2.xml", sheet("two"))
 
-        assert extract_text(path) == "#\ntwo\n#\nten"
+        assert extract_text(path) == f"{M}#\ntwo\n{M}#\nten"
 
     def test_xlsx_booleans_are_not_numbers(self, tmp_path):
         """A boolean cell is TRUE/FALSE, not the number 1/0."""
@@ -122,9 +125,9 @@ class TestExtractText:
         false = book(tmp_path / "b.xlsx", '<c r="A1" t="b"><v>0</v></c>')
         number = book(tmp_path / "c.xlsx", '<c r="A1"><v>1</v></c>')
 
-        assert extract_text(boolean) == "#\nTRUE"
-        assert extract_text(false) == "#\nFALSE"
-        assert extract_text(number) == "#\n1"
+        assert extract_text(boolean) == f"{M}#\nTRUE"
+        assert extract_text(false) == f"{M}#\nFALSE"
+        assert extract_text(number) == f"{M}#\n1"
 
     def test_xlsx_shared_formula_ids_do_not_matter(self, tmp_path):
         """Shared formulas with different group ids but the same master are the same text."""
@@ -145,7 +148,7 @@ class TestExtractText:
         renumbered = book(tmp_path / "b.xlsx", 5)
         different = book(tmp_path / "c.xlsx", 0, master="A1*3")
 
-        assert extract_text(first) == "#\n=A1*2\n=shared(A1*2)"
+        assert extract_text(first) == f"{M}#\n{M}=A1*2\n{M}=shared(A1*2)"
         assert extract_text(renumbered) == extract_text(first)
         assert extract_text(different) != extract_text(first)
 
@@ -157,7 +160,83 @@ class TestExtractText:
 
         assert extract_text(doc) == "# Introduction\n# Summary"
         assert extract_text(deck) == "# Title"
-        assert extract_text(book) == "# S\n# note"
+        assert extract_text(book) == f"{M}# S\n# note"
+
+    def test_xlsx_structure_cannot_be_imitated_by_cell_text(self, tmp_path):
+        """Cell text never collides with sheet, cell or formula structure."""
+        one_sheet = make_xlsx(tmp_path / "a.xlsx", {"A": [["foo"], ["# B"], ["bar"]]})
+        two_sheets = make_xlsx(tmp_path / "b.xlsx", {"A": [["foo"]], "B": [["bar"]]})
+        assert extract_text(one_sheet) != extract_text(two_sheets)
+
+        one_cell = make_xlsx(tmp_path / "c.xlsx", {"S": [["a b"]]})
+        two_cells = make_xlsx(tmp_path / "d.xlsx", {"S": [["a", "b"]]})
+        assert extract_text(one_cell) != extract_text(two_cells)
+
+        s = "http://schemas.openxmlformats.org/spreadsheetml/2006/main"
+        literal = tmp_path / "e.xlsx"
+        with zipfile.ZipFile(literal, "w") as package:
+            package.writestr(
+                "xl/worksheets/sheet1.xml",
+                f'<worksheet xmlns="{s}"><sheetData><row r="1"><c r="A1" t="inlineStr">'
+                "<is><t>=1+1</t></is></c></row></sheetData></worksheet>",
+            )
+        formula = tmp_path / "f.xlsx"
+        with zipfile.ZipFile(formula, "w") as package:
+            package.writestr(
+                "xl/worksheets/sheet1.xml",
+                f'<worksheet xmlns="{s}"><sheetData><row r="1"><c r="A1"><f>1+1</f><v>2</v>'
+                "</c></row></sheetData></worksheet>",
+            )
+        assert extract_text(literal) == f"{M}#\n=1+1"
+        assert extract_text(formula) == f"{M}#\n{M}=1+1"
+
+    def test_docx_headers_follow_section_references(self, tmp_path):
+        """Headers are read through the section references, not by part name."""
+        w = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+        r = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
+        rel = "http://schemas.openxmlformats.org/package/2006/relationships"
+
+        def part(text):
+            return f'<w:hdr xmlns:w="{w}"><w:p><w:r><w:t>{text}</w:t></w:r></w:p></w:hdr>'
+
+        def document(path, first_section, second_section):
+            body = "".join(
+                f"<w:p><w:r><w:t>{text}</w:t></w:r></w:p><w:sectPr>"
+                f'<w:headerReference w:type="default" r:id="{rid}"/></w:sectPr>'
+                for text, rid in (("Chapter one", first_section), ("Chapter two", second_section))
+            )
+            with zipfile.ZipFile(path, "w") as package:
+                package.writestr(
+                    "word/document.xml",
+                    f'<w:document xmlns:w="{w}" xmlns:r="{r}"><w:body>{body}</w:body>'
+                    "</w:document>",
+                )
+                package.writestr("word/header1.xml", part("Draft"))
+                package.writestr("word/header2.xml", part("Final"))
+                package.writestr("word/header3.xml", part("Unused"))
+                package.writestr(
+                    "word/_rels/document.xml.rels",
+                    f'<Relationships xmlns="{rel}">'
+                    '<Relationship Id="rId1" Type="header" Target="header1.xml"/>'
+                    '<Relationship Id="rId2" Type="header" Target="header2.xml"/>'
+                    "</Relationships>",
+                )
+            return path
+
+        normal = document(tmp_path / "a.docx", "rId1", "rId2")
+        swapped = document(tmp_path / "b.docx", "rId2", "rId1")
+
+        assert extract_text(normal) == (
+            f"Chapter one\nChapter two\n{M}header default\nDraft\n{M}header default\nFinal"
+        )
+        assert extract_text(swapped) != extract_text(normal)
+        assert "Unused" not in extract_text(normal)
+
+    def test_structure_marker_is_stripped_from_content(self, tmp_path):
+        """Content cannot smuggle the structure marker."""
+        from dupfinder.office_text import _normalize
+
+        assert _normalize(f"a{M}b  c") == "ab c"
 
     def test_pptx_slide_order(self, tmp_path):
         """Presentation text follows the slide order of the presentation part."""
