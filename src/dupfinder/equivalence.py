@@ -25,11 +25,18 @@ EQUIVALENT_LABEL = "ficheiro equivalente - nível {level} (validar)"
 
 LEGACY_EXTENSIONS = frozenset({".doc", ".xls", ".ppt"})
 
-# Parts that hold metadata rather than document content
-_IGNORED_PART_PREFIXES = ("docProps/",)
+# Relationship types (by their ending) that declare a part as document properties
+_METADATA_RELATIONSHIP_TYPES = (
+    "/core-properties",
+    "/extended-properties",
+    "/custom-properties",
+    "/thumbnail",
+)
+_METADATA_FALLBACK_PREFIX = "docProps/"
+_RELATIONSHIPS_PART = "_rels/.rels"
 # Package descriptors: they say which part is the document and how parts are interpreted,
-# so they are compared after dropping their entries about the ignored metadata parts
-_DESCRIPTOR_PARTS = frozenset({"[Content_Types].xml", "_rels/.rels"})
+# so they are compared after dropping their entries about the metadata parts
+_DESCRIPTOR_PARTS = frozenset({"[Content_Types].xml", _RELATIONSHIPS_PART})
 
 GroupOrder = Callable[[list[Path]], list[Path]]
 
@@ -56,22 +63,57 @@ class EquivalentGroup:
         return EQUIVALENT_LABEL.format(level=self.level)
 
 
-def _descriptor_entries(package: zipfile.ZipFile, name: str) -> list[str] | None:
+def _parse_part(package: zipfile.ZipFile, name: str) -> ElementTree.Element | None:
+    """Parse a small XML part, returning None if it is missing or malformed."""
+    data = read_part(package, name)
+    if data is None:
+        return None
+    try:
+        return ElementTree.fromstring(data)
+    except ElementTree.ParseError:
+        return None
+
+
+def _metadata_parts(package: zipfile.ZipFile) -> set[str]:
+    """Find the parts that hold document properties rather than content.
+
+    A part is metadata when the package relationships declare it as such (core, extended
+    or custom properties, or the thumbnail). Its location alone does not decide it, so a
+    document part that happens to live under docProps/ still counts as content. Packages
+    without readable relationships fall back to treating everything under docProps/ as
+    metadata.
+
+    Args:
+        package: Open Office document
+
+    Returns:
+        Names of the metadata parts
+    """
+    root = _parse_part(package, _RELATIONSHIPS_PART)
+    if root is None:
+        return {n for n in package.namelist() if n.startswith(_METADATA_FALLBACK_PREFIX)}
+    return {
+        element.get("Target", "").lstrip("/")
+        for element in root
+        if element.get("Type", "").endswith(_METADATA_RELATIONSHIP_TYPES)
+    }
+
+
+def _descriptor_entries(
+    package: zipfile.ZipFile, name: str, metadata: set[str]
+) -> list[str] | None:
     """Summarize a package descriptor without its entries about metadata parts.
 
     Args:
         package: Open Office document
         name: '[Content_Types].xml' or '_rels/.rels'
+        metadata: Names of the metadata parts
 
     Returns:
         Sorted description of the remaining entries, or None if the part cannot be parsed
     """
-    data = read_part(package, name)
-    if data is None:
-        return None
-    try:
-        root = ElementTree.fromstring(data)
-    except ElementTree.ParseError:
+    root = _parse_part(package, name)
+    if root is None:
         return None
 
     entries = []
@@ -79,7 +121,7 @@ def _descriptor_entries(package: zipfile.ZipFile, name: str) -> list[str] | None
         # Relationship ids are arbitrary labels and may be renumbered between saves
         attributes = {k: v for k, v in element.attrib.items() if k != "Id"}
         location = attributes.get("PartName") or attributes.get("Target") or ""
-        if location.lstrip("/").startswith(_IGNORED_PART_PREFIXES):
+        if location.lstrip("/") in metadata:
             continue
         tag = element.tag.rpartition("}")[2]
         entries.append(f"{tag} {sorted(attributes.items())}")
@@ -102,16 +144,17 @@ def package_signature(filepath: Path) -> str | None:
     """
     try:
         with zipfile.ZipFile(filepath) as package:
+            metadata = _metadata_parts(package)
             entries = sorted(
                 (info.filename, info.CRC, info.file_size)
                 for info in package.infolist()
                 if not info.is_dir()
                 and info.filename not in _DESCRIPTOR_PARTS
-                and not info.filename.startswith(_IGNORED_PART_PREFIXES)
+                and info.filename not in metadata
             )
             descriptors = []
             for name in sorted(_DESCRIPTOR_PARTS & set(package.namelist())):
-                summary = _descriptor_entries(package, name)
+                summary = _descriptor_entries(package, name, metadata)
                 if summary is None:
                     # Unparseable descriptor: fall back to comparing it byte for byte
                     info = package.getinfo(name)
