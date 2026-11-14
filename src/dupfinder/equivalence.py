@@ -14,7 +14,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from xml.etree import ElementTree
 
-from dupfinder.office import MAX_METADATA_SIZE, is_office_file, read_part
+from dupfinder.office import MAX_METADATA_SIZE, PACKAGE_ERRORS, is_office_file, read_part
 
 logger = logging.getLogger(__name__)
 
@@ -160,7 +160,7 @@ def package_signature(filepath: Path) -> str | None:
                     info = package.getinfo(name)
                     summary = [f"raw {info.CRC} {info.file_size}"]
                 descriptors.append((name, summary))
-    except (OSError, zipfile.BadZipFile, RuntimeError) as e:
+    except PACKAGE_ERRORS as e:
         logger.warning(
             f"Skipping {filepath}: not a readable Office package "
             f"(password-protected or corrupt?): {e}"
