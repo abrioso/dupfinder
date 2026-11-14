@@ -5,7 +5,14 @@ import logging
 import sys
 from pathlib import Path
 
-from dupfinder.equivalence import LEVEL_PACKAGE, EquivalenceFinder, EquivalentGroup
+from dupfinder.equivalence import (
+    DEFAULT_SIMILARITY_THRESHOLD,
+    LEVEL_PACKAGE,
+    LEVEL_SIMILAR,
+    LEVEL_TEXT,
+    EquivalenceFinder,
+    EquivalentGroup,
+)
 from dupfinder.formatters import format_output
 from dupfinder.scanner import KEEP_POLICIES, DuplicateFinder
 
@@ -133,6 +140,29 @@ def parse_args(args: list[str] | None = None) -> argparse.Namespace:
         "metadata or compression (level 1). Equivalent files are never deleted or hardlinked",
     )
 
+    parser.add_argument(
+        "--equiv-text",
+        action="store_true",
+        help="Also report .docx/.xlsx/.pptx files with the same text but different "
+        "formatting (level 2)",
+    )
+
+    parser.add_argument(
+        "--equiv-similar",
+        action="store_true",
+        help="Also report .docx/.xlsx/.pptx files with similar text, such as successive "
+        "versions of a document (level 3)",
+    )
+
+    parser.add_argument(
+        "--similarity-threshold",
+        type=float,
+        default=DEFAULT_SIMILARITY_THRESHOLD,
+        metavar="RATIO",
+        help="Minimum text similarity for --equiv-similar, greater than 0 and at most 1 "
+        f"(default: {DEFAULT_SIMILARITY_THRESHOLD})",
+    )
+
     # Actions
     parser.add_argument(
         "--delete",
@@ -184,6 +214,10 @@ def equivalence_levels(args: argparse.Namespace) -> set[int]:
     levels = set()
     if args.equiv_package:
         levels.add(LEVEL_PACKAGE)
+    if args.equiv_text:
+        levels.add(LEVEL_TEXT)
+    if args.equiv_similar:
+        levels.add(LEVEL_SIMILAR)
     return levels
 
 
@@ -218,6 +252,10 @@ def main() -> int:
             if not path.exists():
                 logger.error(f"Path does not exist: {path}")
                 return 1
+
+        if not 0 < args.similarity_threshold <= 1:
+            logger.error("--similarity-threshold must be greater than 0 and at most 1")
+            return 1
 
         for ref in args.reference:
             if not ref.is_dir():
@@ -258,6 +296,7 @@ def main() -> int:
                 levels=levels,
                 order_group=finder.order_group,
                 num_threads=args.threads,
+                similarity_threshold=args.similarity_threshold,
             ).find(finder.scanned_files, duplicates)
 
         if not duplicates and not equivalents:
