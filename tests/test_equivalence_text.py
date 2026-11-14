@@ -234,6 +234,14 @@ class TestExtractText:
         assert package_signature(descriptor) is None
         assert _find(tmp_path, {1, 2, 3})[1] == []
 
+    def test_unsupported_xml_encoding_is_skipped(self, tmp_path):
+        """A document part declaring an unsupported encoding yields no text."""
+        path = tmp_path / "a.docx"
+        with zipfile.ZipFile(path, "w") as package:
+            package.writestr("word/document.xml", '<?xml version="1.0" encoding="idna"?><d/>')
+
+        assert extract_text(path) is None
+
 
 class TestSketch:
     """Test cases for the similarity sketch."""

@@ -17,7 +17,13 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from xml.etree import ElementTree
 
-from dupfinder.office import MAX_METADATA_SIZE, PACKAGE_ERRORS, is_office_file, read_part
+from dupfinder.office import (
+    MAX_METADATA_SIZE,
+    PACKAGE_ERRORS,
+    XML_ERRORS,
+    is_office_file,
+    read_part,
+)
 from dupfinder.office_text import extract_text
 
 try:
@@ -96,7 +102,7 @@ def _parse_part(package: zipfile.ZipFile, name: str) -> ElementTree.Element | No
         return None
     try:
         return ElementTree.fromstring(data)
-    except ElementTree.ParseError:
+    except XML_ERRORS:
         return None
 
 

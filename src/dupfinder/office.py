@@ -12,6 +12,10 @@ logger = logging.getLogger(__name__)
 # Errors raised while opening or reading a damaged or unsupported package
 PACKAGE_ERRORS = (OSError, zipfile.BadZipFile, zlib.error, RuntimeError, EOFError)
 
+# Errors raised by the XML parser on malformed content; an unknown or unsupported
+# encoding declaration raises LookupError or ValueError instead of ParseError
+XML_ERRORS = (ElementTree.ParseError, LookupError, ValueError)
+
 OFFICE_EXTENSIONS = frozenset({".docx", ".xlsx", ".pptx"})
 
 # Parts larger than this are not parsed, to bound memory use on malformed packages
@@ -90,7 +94,7 @@ def _core_properties_part(package: zipfile.ZipFile) -> str:
                     target = relationship.get("Target", "").lstrip("/")
                     if target:
                         return target
-        except ElementTree.ParseError:
+        except XML_ERRORS:
             pass
     return CORE_PROPERTIES_PART
 
@@ -115,7 +119,7 @@ def read_core_properties(filepath: Path) -> CoreProperties:
         if data is None:
             return CoreProperties()
         root = ElementTree.fromstring(data)
-    except (*PACKAGE_ERRORS, ElementTree.ParseError) as e:
+    except (*PACKAGE_ERRORS, *XML_ERRORS) as e:
         logger.debug(f"Cannot read document properties of {filepath}: {e}")
         return CoreProperties()
 

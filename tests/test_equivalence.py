@@ -147,6 +147,15 @@ class TestPackageSignature:
         assert package_signature(paths[0]) == package_signature(paths[1])
         assert package_signature(paths[0]) != package_signature(paths[2])
 
+    def test_descriptor_with_unsupported_encoding_is_compared_raw(self, tmp_path):
+        """A descriptor declaring an unknown encoding does not raise."""
+        path = tmp_path / "a.docx"
+        with zipfile.ZipFile(path, "w") as package:
+            package.writestr("word/document.xml", "<document/>")
+            package.writestr("_rels/.rels", '<?xml version="1.0" encoding="nope"?><r/>')
+
+        assert package_signature(path) is not None
+
     def test_unreadable_package(self, tmp_path):
         """A file that is not a ZIP package has no signature."""
         path = tmp_path / "locked.docx"
