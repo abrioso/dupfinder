@@ -4,9 +4,24 @@ import csv
 import io
 import json
 from collections.abc import Callable
+from datetime import datetime
 from pathlib import Path
+from typing import Any
+
+from dupfinder.office import read_core_properties
 
 ReferenceCheck = Callable[[Path], bool]
+
+CSV_COLUMNS = [
+    "hash",
+    "file_path",
+    "group_size",
+    "role",
+    "size",
+    "modified",
+    "document_modified",
+    "document_last_modified_by",
+]
 
 
 def _role(index: int, filepath: Path, is_reference: ReferenceCheck | None) -> str:
@@ -23,6 +38,79 @@ def _role(index: int, filepath: Path, is_reference: ReferenceCheck | None) -> st
     if is_reference is not None and is_reference(filepath):
         return "reference"
     return "keep" if index == 0 else "duplicate"
+
+
+def _format_timestamp(timestamp: float) -> str | None:
+    """Format a file system timestamp as ISO 8601 local time with UTC offset.
+
+    Args:
+        timestamp: Seconds since the epoch
+
+    Returns:
+        Timestamp such as '2026-11-12T08:38:00+00:00', or None when the file system
+        reports a time that cannot be represented
+    """
+    try:
+        return datetime.fromtimestamp(timestamp).astimezone().isoformat(timespec="seconds")
+    except (OSError, OverflowError, ValueError):
+        return None
+
+
+def _file_details(
+    index: int, filepath: Path, is_reference: ReferenceCheck | None
+) -> dict[str, Any]:
+    """Collect what is reported about one file of a group.
+
+    Args:
+        index: Position of the file in its group
+        filepath: Path to the file
+        is_reference: Callable telling whether a file is in a reference directory
+
+    Returns:
+        Dictionary with path, role, size, file system modification time and, for Office
+        documents, the save time and last author recorded inside the document
+    """
+    size: int | None = None
+    modified: str | None = None
+    try:
+        stat = filepath.stat()
+    except OSError:
+        pass
+    else:
+        size = stat.st_size
+        modified = _format_timestamp(stat.st_mtime)
+
+    properties = read_core_properties(filepath)
+    return {
+        "path": str(filepath),
+        "role": _role(index, filepath, is_reference),
+        "size": size,
+        "modified": modified,
+        "document_modified": properties.modified,
+        "document_last_modified_by": properties.last_modified_by,
+    }
+
+
+def _table_line(details: dict[str, Any]) -> str:
+    """Format one file of a group for the table output.
+
+    Args:
+        details: File details from _file_details
+
+    Returns:
+        Line with path, role marker and timestamps
+    """
+    marker = "" if details["role"] == "duplicate" else f" [{details['role']}]"
+    line = f"  - {details['path']}{marker}"
+    if details["modified"]:
+        line += f"\n      modified: {details['modified']}"
+    if details["document_modified"] or details["document_last_modified_by"]:
+        line += "\n      document saved:" if not details["modified"] else " | document saved:"
+        if details["document_modified"]:
+            line += f" {details['document_modified']}"
+        if details["document_last_modified_by"]:
+            line += f" by {details['document_last_modified_by']}"
+    return line
 
 
 def format_json(
@@ -44,10 +132,7 @@ def format_json(
                 "hash": hash_val,
                 "count": len(file_list),
                 "files": [str(f) for f in file_list],
-                "details": [
-                    {"path": str(f), "role": _role(i, f, is_reference)}
-                    for i, f in enumerate(file_list)
-                ],
+                "details": [_file_details(i, f, is_reference) for i, f in enumerate(file_list)],
             }
         )
 
@@ -70,13 +155,25 @@ def format_csv(
     writer = csv.writer(output)
 
     # Write header
-    writer.writerow(["hash", "file_path", "group_size", "role"])
+    writer.writerow(CSV_COLUMNS)
 
     # Write data
     for hash_val, file_list in duplicates.items():
         group_size = len(file_list)
         for i, filepath in enumerate(file_list):
-            writer.writerow([hash_val, str(filepath), group_size, _role(i, filepath, is_reference)])
+            details = _file_details(i, filepath, is_reference)
+            writer.writerow(
+                [
+                    hash_val,
+                    details["path"],
+                    group_size,
+                    details["role"],
+                    details["size"],
+                    details["modified"],
+                    details["document_modified"],
+                    details["document_last_modified_by"],
+                ]
+            )
 
     return output.getvalue()
 
@@ -118,9 +215,7 @@ def format_table(
         lines.append(f"Wasted space: {_format_size(wasted_space)}")
 
         for index, filepath in enumerate(file_list):
-            role = _role(index, filepath, is_reference)
-            marker = "" if role == "duplicate" else f" [{role}]"
-            lines.append(f"  - {filepath}{marker}")
+            lines.append(_table_line(_file_details(index, filepath, is_reference)))
 
     # Add summary
     lines.append("\n" + "=" * 80)
