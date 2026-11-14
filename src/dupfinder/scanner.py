@@ -80,6 +80,8 @@ class DuplicateFinder:
             Path(os.path.abspath(p)) for p in self._reference_scan_paths
         }
         self.keep = keep
+        # Files considered by the last call to find_duplicates
+        self.scanned_files: list[Path] = []
 
         # Create pathspec for exclusion patterns
         self.pathspec = (
@@ -363,6 +365,7 @@ class DuplicateFinder:
         logger.info("Collecting files...")
         # Reference directories are always part of the scan
         files = self._collect_files([*self._reference_scan_paths, *paths])
+        self.scanned_files = files
         logger.info(f"Found {len(files)} files to process")
 
         if not files:

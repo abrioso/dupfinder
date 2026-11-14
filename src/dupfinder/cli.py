@@ -5,6 +5,7 @@ import logging
 import sys
 from pathlib import Path
 
+from dupfinder.equivalence import LEVEL_PACKAGE, EquivalenceFinder, EquivalentGroup
 from dupfinder.formatters import format_output
 from dupfinder.scanner import KEEP_POLICIES, DuplicateFinder
 
@@ -124,6 +125,14 @@ def parse_args(args: list[str] | None = None) -> argparse.Namespace:
         "(default: first)",
     )
 
+    # Equivalent Office documents (reported for validation, never deleted)
+    parser.add_argument(
+        "--equiv-package",
+        action="store_true",
+        help="Also report .docx/.xlsx/.pptx files with the same content parts but different "
+        "metadata or compression (level 1). Equivalent files are never deleted or hardlinked",
+    )
+
     # Actions
     parser.add_argument(
         "--delete",
@@ -161,6 +170,21 @@ def parse_args(args: list[str] | None = None) -> argparse.Namespace:
     )
 
     return parser.parse_args(args)
+
+
+def equivalence_levels(args: argparse.Namespace) -> set[int]:
+    """Collect the equivalence levels requested on the command line.
+
+    Args:
+        args: Parsed arguments
+
+    Returns:
+        Set of requested levels (empty when no equivalence search was requested)
+    """
+    levels = set()
+    if args.equiv_package:
+        levels.add(LEVEL_PACKAGE)
+    return levels
 
 
 def main() -> int:
@@ -225,22 +249,39 @@ def main() -> int:
         logger.info("Scanning for duplicate files...")
         duplicates = finder.find_duplicates(args.paths)
 
-        if not duplicates:
+        # Find equivalent Office documents
+        levels = equivalence_levels(args)
+        equivalents: list[EquivalentGroup] = []
+        if levels:
+            logger.info("Checking Office documents for equivalence...")
+            equivalents = EquivalenceFinder(
+                levels=levels,
+                order_group=finder.order_group,
+                num_threads=args.threads,
+            ).find(finder.scanned_files, duplicates)
+
+        if not duplicates and not equivalents:
             logger.info("No duplicates found")
             return 0
 
         # Format and output results
         output = format_output(
-            duplicates, format_type=args.output, is_reference=finder.is_reference
+            duplicates,
+            format_type=args.output,
+            is_reference=finder.is_reference,
+            equivalents=equivalents,
         )
 
         if args.output_file:
-            args.output_file.write_text(output)
+            args.output_file.write_text(output, encoding="utf-8")
             logger.info(f"Output written to {args.output_file}")
         else:
             print(output)
 
-        # Perform actions if requested
+        # Perform actions if requested. Only exact duplicates are ever passed to them.
+        if equivalents and (args.delete or args.hardlink):
+            logger.info("Equivalent files are reported for validation only and are left untouched")
+
         if args.delete:
             count = finder.delete_duplicates(duplicates, dry_run=args.dry_run)
             logger.info(f"{'Would delete' if args.dry_run else 'Deleted'} {count} duplicate files")

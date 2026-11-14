@@ -143,6 +143,29 @@ dupfinder /path/to/dir --keep oldest --delete --dry-run
 
 Outputs mark each file with its role: `reference`, `keep` or `duplicate`.
 
+### Equivalent Office documents
+
+Office files (`.docx`, `.xlsx`, `.pptx`) can hold the same document without being
+byte-identical. These searches are optional and independent, and their results are
+labelled `ficheiro equivalente - nível X (validar)`.
+
+**Equivalent files are only reported. `--delete` and `--hardlink` never touch them.**
+
+| Flag | Level | Finds |
+|---|---|---|
+| `--equiv-package` | 1 | Same content parts, different metadata or compression |
+
+```bash
+dupfinder ~/Documents --equiv-package --output csv --output-file report.csv
+```
+
+Level 1 reads only the ZIP directory of each file (name, CRC and size of each part) and
+ignores `docProps/`, so it adds almost no scan time.
+
+Exact duplicates are represented by the file to keep, and a pair of files is reported
+only once, at the lowest level where it matches. Legacy formats (`.doc`, `.xls`, `.ppt`)
+and password-protected files are skipped and logged.
+
 ### Actions
 
 Delete duplicates (keeps the file selected by `--reference`/`--keep`):
@@ -208,14 +231,20 @@ dupfinder ~/media --hardlink            # Apply
 
 ## Output Examples
 
+Every output shows, for each file, its role and its file system modification time. For
+`.docx`, `.xlsx` and `.pptx` files it also shows the save time and last author recorded
+inside the document, which survive copies and downloads.
+
 ### Table format (default)
 
 ```
 Duplicate group 1 (2 files, 1.50 KB each):
 Hash: a1b2c3d4e5f6
 Wasted space: 1.50 KB
-  - /path/to/file1.txt
-  - /path/to/file2.txt
+  - /path/to/report.docx [keep]
+      modified: 2026-11-10T17:02:11+00:00 | document saved: 2026-11-10T17:02:09Z by Ana
+  - /path/to/copy/report.docx
+      modified: 2026-11-12T08:38:00+00:00 | document saved: 2026-11-10T17:02:09Z by Ana
 
 ================================================================================
 Summary:
@@ -232,8 +261,26 @@ Summary:
     "hash": "a1b2c3d4e5f6",
     "count": 2,
     "files": [
-      "/path/to/file1.txt",
-      "/path/to/file2.txt"
+      "/path/to/report.docx",
+      "/path/to/copy/report.docx"
+    ],
+    "details": [
+      {
+        "path": "/path/to/report.docx",
+        "role": "keep",
+        "size": 1536,
+        "modified": "2026-11-10T17:02:11+00:00",
+        "document_modified": "2026-11-10T17:02:09Z",
+        "document_last_modified_by": "Ana"
+      },
+      {
+        "path": "/path/to/copy/report.docx",
+        "role": "duplicate",
+        "size": 1536,
+        "modified": "2026-11-12T08:38:00+00:00",
+        "document_modified": "2026-11-10T17:02:09Z",
+        "document_last_modified_by": "Ana"
+      }
     ]
   }
 ]
@@ -242,9 +289,9 @@ Summary:
 ### CSV format
 
 ```csv
-hash,file_path,group_size
-a1b2c3d4e5f6,/path/to/file1.txt,2
-a1b2c3d4e5f6,/path/to/file2.txt,2
+hash,file_path,group_size,role,size,modified,document_modified,document_last_modified_by
+a1b2c3d4e5f6,/path/to/report.docx,2,keep,1536,2026-11-10T17:02:11+00:00,2026-11-10T17:02:09Z,Ana
+a1b2c3d4e5f6,/path/to/copy/report.docx,2,duplicate,1536,2026-11-12T08:38:00+00:00,2026-11-10T17:02:09Z,Ana
 ```
 
 ## Development

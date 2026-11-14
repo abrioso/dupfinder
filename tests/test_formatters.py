@@ -38,7 +38,7 @@ class TestFormatters:
         # Should only have header
         lines = result.strip().split("\n")
         assert len(lines) == 1
-        assert lines[0] == "hash,file_path,group_size,role"
+        assert lines[0].startswith("hash,file_path,group_size,role,size,modified")
 
     def test_format_csv_with_duplicates(self, tmp_path):
         """Test CSV formatting with duplicates."""
