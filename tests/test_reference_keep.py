@@ -124,6 +124,26 @@ class TestReference:
         assert ref1.stat().st_ino != ref2.stat().st_ino
         assert other.stat().st_ino == ref1.stat().st_ino
 
+    def test_symlink_inside_reference_is_protected(self, tmp_path):
+        """A symlink in a reference directory that points outside it is never modified."""
+        target = _write(tmp_path / "elsewhere" / "target.txt")
+        copy = _write(tmp_path / "a_work" / "copy.txt")
+        link = tmp_path / "z_ref" / "link.txt"
+        link.parent.mkdir()
+        try:
+            link.symlink_to(target)
+        except OSError:
+            pytest.skip("symlinks are not available")
+
+        finder = DuplicateFinder(reference_paths=[tmp_path / "z_ref"], follow_symlinks=True)
+        groups = finder.find_duplicates([tmp_path / "a_work"])
+
+        assert finder.is_reference(link)
+        assert list(groups.values()) == [[link, copy]]
+        assert finder.delete_duplicates(groups, dry_run=False) == 1
+        assert link.is_symlink() and target.exists()
+        assert not copy.exists()
+
 
 class TestOverlappingPaths:
     """Test cases for scan paths that overlap."""

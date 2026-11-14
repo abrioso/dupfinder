@@ -49,6 +49,68 @@ class TestPackageSignature:
 
         assert package_signature(a) != package_signature(b)
 
+    def _package(self, path, target, extra_rel="", extra_type=""):
+        rel = "http://schemas.openxmlformats.org/package/2006/relationships"
+        doc = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
+        with zipfile.ZipFile(path, "w") as package:
+            package.writestr("word/document.xml", "<document>one</document>")
+            package.writestr("word/other.xml", "<document>two</document>")
+            package.writestr(
+                "_rels/.rels",
+                f'<Relationships xmlns="{rel}"><Relationship Id="rId1" '
+                f'Type="{doc}/officeDocument" Target="{target}"/>{extra_rel}</Relationships>',
+            )
+            package.writestr(
+                "[Content_Types].xml",
+                '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'
+                f'<Default Extension="xml" ContentType="application/xml"/>{extra_type}</Types>',
+            )
+        return path
+
+    def test_main_document_target_is_part_of_the_signature(self, tmp_path):
+        """Packages with the same parts but a different main document differ."""
+        a = self._package(tmp_path / "a.docx", "word/document.xml")
+        b = self._package(tmp_path / "b.docx", "word/other.xml")
+
+        assert package_signature(a) != package_signature(b)
+
+    def test_metadata_entries_in_descriptors_are_ignored(self, tmp_path):
+        """Descriptor entries about docProps parts do not change the signature."""
+        a = self._package(tmp_path / "a.docx", "word/document.xml")
+        b = self._package(
+            tmp_path / "b.docx",
+            "word/document.xml",
+            extra_rel='<Relationship Id="rId9" Type="custom-properties" '
+            'Target="docProps/custom.xml"/>',
+            extra_type='<Override PartName="/docProps/custom.xml" ContentType="x/custom"/>',
+        )
+
+        assert package_signature(a) == package_signature(b)
+
+    def test_content_type_change_changes_signature(self, tmp_path):
+        """A different content type for a content part changes the signature."""
+        a = self._package(tmp_path / "a.docx", "word/document.xml")
+        b = self._package(
+            tmp_path / "b.docx",
+            "word/document.xml",
+            extra_type='<Override PartName="/word/other.xml" ContentType="x/other"/>',
+        )
+
+        assert package_signature(a) != package_signature(b)
+
+    def test_unparseable_descriptor_falls_back_to_raw_comparison(self, tmp_path):
+        """A broken descriptor is compared byte for byte instead of being ignored."""
+        paths = []
+        for name, content in (("a.docx", "<broken"), ("b.docx", "<broken"), ("c.docx", "<bad")):
+            path = tmp_path / name
+            with zipfile.ZipFile(path, "w") as package:
+                package.writestr("word/document.xml", "<document/>")
+                package.writestr("_rels/.rels", content)
+            paths.append(path)
+
+        assert package_signature(paths[0]) == package_signature(paths[1])
+        assert package_signature(paths[0]) != package_signature(paths[2])
+
     def test_unreadable_package(self, tmp_path):
         """A file that is not a ZIP package has no signature."""
         path = tmp_path / "locked.docx"

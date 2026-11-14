@@ -74,6 +74,11 @@ class DuplicateFinder:
         # them; resolved paths are used to decide whether a file is protected
         self._reference_scan_paths = list(reference_paths or [])
         self.reference_paths = [self._resolve(p) for p in self._reference_scan_paths]
+        # A symlink inside a reference directory is protected even if it points elsewhere,
+        # so membership is also checked on the path as written
+        self._reference_roots = set(self.reference_paths) | {
+            Path(os.path.abspath(p)) for p in self._reference_scan_paths
+        }
         self.keep = keep
         # Files considered by the last call to find_duplicates
         self.scanned_files: list[Path] = []
@@ -113,8 +118,12 @@ class DuplicateFinder:
         """
         if not self.reference_paths:
             return False
-        resolved = self._resolve(filepath)
-        return any(ref == resolved or ref in resolved.parents for ref in self.reference_paths)
+        locations = {self._resolve(filepath), Path(os.path.abspath(filepath))}
+        return any(
+            root == location or root in location.parents
+            for location in locations
+            for root in self._reference_roots
+        )
 
     def order_group(self, files: list[Path]) -> list[Path]:
         """Order a group of matching files so that the file to keep comes first.

@@ -98,6 +98,23 @@ class TestTimestampOutput:
         assert f"modified: {_expected(MTIME)}" in table
         assert "document saved: 2026-05-06T07:08:09Z by Ana" in table
 
+    def test_table_shows_author_without_save_time(self, tmp_path):
+        """The last author is shown even when the document has no save time."""
+        import zipfile
+
+        xml = (
+            '<cp:coreProperties xmlns:cp="http://schemas.openxmlformats.org/package/2006/'
+            'metadata/core-properties"><cp:lastModifiedBy>Rui</cp:lastModifiedBy>'
+            "</cp:coreProperties>"
+        )
+        a = tmp_path / "a.docx"
+        with zipfile.ZipFile(a, "w") as package:
+            package.writestr("docProps/core.xml", xml)
+        shutil.copy(a, tmp_path / "b.docx")
+        groups = DuplicateFinder().find_duplicates([tmp_path])
+
+        assert "| document saved: by Rui" in format_table(groups)
+
     def test_plain_files_have_no_document_properties(self, tmp_path):
         """Non-Office files report only the file system timestamp."""
         (tmp_path / "a.txt").write_text("same")

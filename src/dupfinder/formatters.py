@@ -141,8 +141,10 @@ def _table_line(details: dict[str, Any]) -> str:
         line += f" (similarity {details['similarity']:.2f})"
     if details["modified"]:
         line += f"\n      modified: {details['modified']}"
-    if details["document_modified"]:
-        line += f" | document saved: {details['document_modified']}"
+    if details["document_modified"] or details["document_last_modified_by"]:
+        line += "\n      document saved:" if not details["modified"] else " | document saved:"
+        if details["document_modified"]:
+            line += f" {details['document_modified']}"
         if details["document_last_modified_by"]:
             line += f" by {details['document_last_modified_by']}"
     return line
