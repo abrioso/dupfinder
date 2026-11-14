@@ -14,7 +14,7 @@ from collections.abc import Iterator
 from pathlib import Path
 from xml.etree import ElementTree
 
-from dupfinder.office import read_part
+from dupfinder.office import PACKAGE_ERRORS, read_part
 
 logger = logging.getLogger(__name__)
 
@@ -261,7 +261,7 @@ def extract_text(filepath: Path) -> str | None:
     try:
         with zipfile.ZipFile(filepath) as package:
             lines = [_normalize(line) for line in extractor(package)]
-    except (OSError, zipfile.BadZipFile, ElementTree.ParseError, RuntimeError, KeyError) as e:
+    except (*PACKAGE_ERRORS, ElementTree.ParseError, KeyError) as e:
         logger.warning(f"Cannot extract text from {filepath}: {e}")
         return None
 

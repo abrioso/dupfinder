@@ -211,6 +211,29 @@ class TestExtractText:
         assert extract_text(broken) is None
         assert extract_text(bad_xml) is None
 
+    def test_corrupt_compressed_parts_are_skipped(self, tmp_path):
+        """Damaged compressed streams skip the document instead of raising."""
+        from dupfinder.equivalence import package_signature
+
+        def damage(path, part):
+            data = bytearray(path.read_bytes())
+            start = data.index(part.encode()) + len(part)
+            data[start : start + 8] = b"\xff" * 8
+            path.write_bytes(bytes(data))
+            return path
+
+        body = make_docx(tmp_path / "body.docx", _paragraphs(WORDS))
+        damage(body, "word/document.xml")
+        descriptor = tmp_path / "descriptor.docx"
+        with zipfile.ZipFile(descriptor, "w", zipfile.ZIP_DEFLATED) as package:
+            package.writestr("word/document.xml", "<document/>")
+            package.writestr("_rels/.rels", "<Relationships>" + " " * 2000 + "</Relationships>")
+        damage(descriptor, "_rels/.rels")
+
+        assert extract_text(body) is None
+        assert package_signature(descriptor) is None
+        assert _find(tmp_path, {1, 2, 3})[1] == []
+
 
 class TestSketch:
     """Test cases for the similarity sketch."""
