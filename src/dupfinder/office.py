@@ -13,7 +13,12 @@ OFFICE_EXTENSIONS = frozenset({".docx", ".xlsx", ".pptx"})
 # Parts larger than this are not parsed, to bound memory use on malformed packages
 MAX_PART_SIZE = 256 * 1024 * 1024
 
+# Properties and package descriptors are tiny; anything larger is malformed or hostile
+MAX_METADATA_SIZE = 1024 * 1024
+
+RELATIONSHIPS_PART = "_rels/.rels"
 CORE_PROPERTIES_PART = "docProps/core.xml"
+_CORE_PROPERTIES_TYPE = "/core-properties"
 _NS_CORE = "{http://schemas.openxmlformats.org/package/2006/metadata/core-properties}"
 _NS_DCTERMS = "{http://purl.org/dc/terms/}"
 
@@ -43,12 +48,13 @@ def is_office_file(filepath: Path) -> bool:
     return filepath.suffix.lower() in OFFICE_EXTENSIONS
 
 
-def read_part(package: zipfile.ZipFile, name: str) -> bytes | None:
+def read_part(package: zipfile.ZipFile, name: str, max_size: int = MAX_PART_SIZE) -> bytes | None:
     """Read one part of an open package.
 
     Args:
         package: Open Office document
         name: Part name inside the package
+        max_size: Largest uncompressed size accepted
 
     Returns:
         Part content, or None if the part is missing or too large
@@ -57,10 +63,32 @@ def read_part(package: zipfile.ZipFile, name: str) -> bytes | None:
         info = package.getinfo(name)
     except KeyError:
         return None
-    if info.file_size > MAX_PART_SIZE:
+    if info.file_size > max_size:
         logger.warning(f"Skipping oversized part {name} in {package.filename}")
         return None
     return package.read(info)
+
+
+def _core_properties_part(package: zipfile.ZipFile) -> str:
+    """Find the core properties part declared by the package relationships.
+
+    Args:
+        package: Open Office document
+
+    Returns:
+        Declared part name, or the conventional 'docProps/core.xml' when none is declared
+    """
+    data = read_part(package, RELATIONSHIPS_PART, MAX_METADATA_SIZE)
+    if data is not None:
+        try:
+            for relationship in ElementTree.fromstring(data):
+                if relationship.get("Type", "").endswith(_CORE_PROPERTIES_TYPE):
+                    target = relationship.get("Target", "").lstrip("/")
+                    if target:
+                        return target
+        except ElementTree.ParseError:
+            pass
+    return CORE_PROPERTIES_PART
 
 
 def read_core_properties(filepath: Path) -> CoreProperties:
@@ -79,7 +107,7 @@ def read_core_properties(filepath: Path) -> CoreProperties:
 
     try:
         with zipfile.ZipFile(filepath) as package:
-            data = read_part(package, CORE_PROPERTIES_PART)
+            data = read_part(package, _core_properties_part(package), MAX_METADATA_SIZE)
         if data is None:
             return CoreProperties()
         root = ElementTree.fromstring(data)
