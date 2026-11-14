@@ -247,3 +247,27 @@ class TestCLI:
         assert main() == 0
         assert ref.exists()
         assert not other.exists()
+
+
+class TestHardlinkSymlinkKeeper:
+    """Hardlinking when the file to keep is a symlink."""
+
+    def test_duplicates_link_to_the_referent(self, tmp_path):
+        """Duplicates become hardlinks of the real file, never copies of the symlink."""
+        target = _write(tmp_path / "elsewhere" / "target.txt")
+        copy = _write(tmp_path / "a_work" / "copy.txt")
+        link = tmp_path / "z_ref" / "link.txt"
+        link.parent.mkdir()
+        try:
+            link.symlink_to(os.path.relpath(target, link.parent))
+        except OSError:
+            pytest.skip("symlinks are not available")
+
+        finder = DuplicateFinder(reference_paths=[tmp_path / "z_ref"], follow_symlinks=True)
+        groups = finder.find_duplicates([tmp_path / "a_work"])
+
+        assert finder.hardlink_duplicates(groups, dry_run=False) == 1
+        assert not copy.is_symlink()
+        assert copy.read_text() == "same content"
+        assert copy.stat().st_ino == target.stat().st_ino
+        assert link.is_symlink()
