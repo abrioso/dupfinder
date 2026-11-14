@@ -111,9 +111,41 @@ Follow symbolic links:
 dupfinder /path/to/dir --follow-symlinks
 ```
 
+Empty files are skipped by default (`--min-size` defaults to 1). Include them with:
+
+```bash
+dupfinder /path/to/dir --min-size 0
+```
+
+### Choosing which file to keep
+
+Each group lists the file to keep first. Protect whole directories with `--reference`:
+their files are always kept and are never deleted or replaced, even when several of them
+are duplicates of each other. Reference directories are scanned even if they are not
+listed as scan paths.
+
+```bash
+dupfinder ~/Downloads --reference ~/Documents/Official --delete --dry-run
+```
+
+When no reference file settles it, `--keep` picks the file to keep:
+
+| Policy | File kept |
+|---|---|
+| `first` (default) | First path in alphabetical order |
+| `oldest` | Oldest modification time |
+| `newest` | Newest modification time |
+| `shortest-path` | Least nested, then shortest path |
+
+```bash
+dupfinder /path/to/dir --keep oldest --delete --dry-run
+```
+
+Outputs mark each file with its role: `reference`, `keep` or `duplicate`.
+
 ### Actions
 
-Delete duplicates (keeps first occurrence):
+Delete duplicates (keeps the file selected by `--reference`/`--keep`):
 
 ```bash
 dupfinder /path/to/dir --delete --dry-run  # Preview
