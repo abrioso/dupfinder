@@ -98,6 +98,19 @@ class TestCoreProperties:
         assert len(core_xml_text) > 1000
         assert read_core_properties(path) == CoreProperties()
 
+    def test_unsupported_xml_encodings_are_tolerated(self, tmp_path):
+        """An unknown or unsupported encoding declaration yields empty properties."""
+        import zipfile
+
+        for number, encoding in enumerate(("no-such-encoding", "idna")):
+            xml = f'<?xml version="1.0" encoding="{encoding}"?><coreProperties/>'
+            for part in ("docProps/core.xml", "_rels/.rels"):
+                path = tmp_path / f"{number}-{part.replace('/', '_')}.docx"
+                with zipfile.ZipFile(path, "w") as package:
+                    package.writestr(part, xml)
+
+                assert read_core_properties(path) == CoreProperties()
+
 
 class TestTimestampOutput:
     def test_unrepresentable_timestamp_keeps_the_size(self, tmp_path, monkeypatch):
