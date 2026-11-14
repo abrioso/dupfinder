@@ -56,16 +56,20 @@ def _role(
     return "keep" if index == 0 else "duplicate"
 
 
-def _format_timestamp(timestamp: float) -> str:
+def _format_timestamp(timestamp: float) -> str | None:
     """Format a file system timestamp as ISO 8601 local time with UTC offset.
 
     Args:
         timestamp: Seconds since the epoch
 
     Returns:
-        Timestamp such as '2026-11-12T08:38:00+00:00'
+        Timestamp such as '2026-11-12T08:38:00+00:00', or None when the file system
+        reports a time that cannot be represented
     """
-    return datetime.fromtimestamp(timestamp).astimezone().isoformat(timespec="seconds")
+    try:
+        return datetime.fromtimestamp(timestamp).astimezone().isoformat(timespec="seconds")
+    except (OSError, OverflowError, ValueError):
+        return None
 
 
 def _file_details(
@@ -86,13 +90,15 @@ def _file_details(
         Dictionary with path, role, size, file system modification time and, for Office
         documents, the save time and last author recorded inside the document
     """
+    size: int | None = None
+    modified: str | None = None
     try:
         stat = filepath.stat()
-        size: int | None = stat.st_size
-        modified: str | None = _format_timestamp(stat.st_mtime)
     except OSError:
-        size = None
-        modified = None
+        pass
+    else:
+        size = stat.st_size
+        modified = _format_timestamp(stat.st_mtime)
 
     properties = read_core_properties(filepath)
     return {

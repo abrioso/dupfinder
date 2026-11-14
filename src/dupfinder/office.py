@@ -2,11 +2,15 @@
 
 import logging
 import zipfile
+import zlib
 from dataclasses import dataclass
 from pathlib import Path
 from xml.etree import ElementTree
 
 logger = logging.getLogger(__name__)
+
+# Errors raised while opening or reading a damaged or unsupported package
+PACKAGE_ERRORS = (OSError, zipfile.BadZipFile, zlib.error, RuntimeError, EOFError)
 
 OFFICE_EXTENSIONS = frozenset({".docx", ".xlsx", ".pptx"})
 
@@ -111,7 +115,7 @@ def read_core_properties(filepath: Path) -> CoreProperties:
         if data is None:
             return CoreProperties()
         root = ElementTree.fromstring(data)
-    except (OSError, zipfile.BadZipFile, ElementTree.ParseError, RuntimeError) as e:
+    except (*PACKAGE_ERRORS, ElementTree.ParseError) as e:
         logger.debug(f"Cannot read document properties of {filepath}: {e}")
         return CoreProperties()
 
