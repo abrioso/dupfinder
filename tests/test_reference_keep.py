@@ -162,9 +162,9 @@ class TestRoleOutput:
         assert [d["role"] for d in data[0]["details"]] == ["reference", "duplicate"]
 
         csv_lines = format_csv(groups, finder.is_reference).strip().splitlines()
-        assert csv_lines[0] == "hash,file_path,group_size,role"
-        assert csv_lines[1].endswith(",reference")
-        assert csv_lines[2].endswith(",duplicate")
+        assert csv_lines[0].startswith("hash,file_path,group_size,role,size,modified")
+        assert ",reference," in csv_lines[1]
+        assert ",duplicate," in csv_lines[2]
 
         assert f"{ref} [reference]" in format_table(groups, finder.is_reference)
 
