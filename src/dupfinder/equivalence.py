@@ -17,7 +17,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from xml.etree import ElementTree
 
-from dupfinder.office import is_office_file, read_part
+from dupfinder.office import MAX_METADATA_SIZE, is_office_file, read_part
 from dupfinder.office_text import extract_text
 
 try:
@@ -91,7 +91,7 @@ class EquivalentGroup:
 
 def _parse_part(package: zipfile.ZipFile, name: str) -> ElementTree.Element | None:
     """Parse a small XML part, returning None if it is missing or malformed."""
-    data = read_part(package, name)
+    data = read_part(package, name, MAX_METADATA_SIZE)
     if data is None:
         return None
     try:

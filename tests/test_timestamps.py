@@ -53,6 +53,36 @@ class TestCoreProperties:
 
         assert read_core_properties(path) == CoreProperties()
 
+    def test_core_properties_found_through_relationship(self, tmp_path):
+        """The properties part is located by its relationship, not by a fixed name."""
+        import zipfile
+
+        from tests.office_samples import core_xml
+
+        path = tmp_path / "moved.docx"
+        with zipfile.ZipFile(path, "w") as package:
+            package.writestr("meta/props.xml", core_xml("2026-03-04T05:06:07Z", "Rui"))
+            package.writestr(
+                "_rels/.rels",
+                '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/'
+                'relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/'
+                'package/2006/relationships/metadata/core-properties" Target="/meta/props.xml"/>'
+                "</Relationships>",
+            )
+
+        assert read_core_properties(path) == CoreProperties("2026-03-04T05:06:07Z", "Rui")
+
+    def test_oversized_core_properties_are_not_read(self, tmp_path):
+        """A properties part larger than the metadata limit is ignored."""
+        import zipfile
+
+        path = tmp_path / "bomb.docx"
+        with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as package:
+            package.writestr("docProps/core.xml", "<x>" + " " * (2 * 1024 * 1024) + "</x>")
+
+        assert path.stat().st_size < 10_000
+        assert read_core_properties(path) == CoreProperties()
+
 
 class TestTimestampOutput:
     """Test cases for timestamps reported by the formatters."""
