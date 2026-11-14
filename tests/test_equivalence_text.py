@@ -105,6 +105,37 @@ class TestExtractText:
 
         assert extract_text(path) == "#\ntwo\n#\nten"
 
+    def test_xlsx_booleans_are_not_numbers(self, tmp_path):
+        """A boolean cell is TRUE/FALSE, not the number 1/0."""
+        s = "http://schemas.openxmlformats.org/spreadsheetml/2006/main"
+
+        def book(path, cell):
+            with zipfile.ZipFile(path, "w") as package:
+                package.writestr(
+                    "xl/worksheets/sheet1.xml",
+                    f'<worksheet xmlns="{s}"><sheetData><row r="1">{cell}</row></sheetData>'
+                    "</worksheet>",
+                )
+            return path
+
+        boolean = book(tmp_path / "a.xlsx", '<c r="A1" t="b"><v>1</v></c>')
+        false = book(tmp_path / "b.xlsx", '<c r="A1" t="b"><v>0</v></c>')
+        number = book(tmp_path / "c.xlsx", '<c r="A1"><v>1</v></c>')
+
+        assert extract_text(boolean) == "#\nTRUE"
+        assert extract_text(false) == "#\nFALSE"
+        assert extract_text(number) == "#\n1"
+
+    def test_text_starting_with_hash_is_content(self, tmp_path):
+        """Documents whose every line starts with '# ' still have text."""
+        doc = make_docx(tmp_path / "a.docx", ["# Introduction", "# Summary"])
+        deck = make_pptx(tmp_path / "a.pptx", [["# Title"]])
+        book = make_xlsx(tmp_path / "a.xlsx", {"S": [["# note"]]})
+
+        assert extract_text(doc) == "# Introduction\n# Summary"
+        assert extract_text(deck) == "# Title"
+        assert extract_text(book) == "# S\n# note"
+
     def test_pptx_slide_order(self, tmp_path):
         """Presentation text follows the slide order of the presentation part."""
         path = make_pptx(tmp_path / "a.pptx", [["Title", "Subtitle"], ["Second slide"]])
@@ -270,6 +301,27 @@ class TestLevelThree:
 
         assert _find(tmp_path, {3}, similarity_threshold=0.9)[1] == []
         assert _names(_find(tmp_path, {3}, similarity_threshold=0.3)[1]) == [["a.docx", "b.docx"]]
+
+    def test_widely_shared_text_is_still_grouped(self, tmp_path, monkeypatch):
+        """Shingles shared by more documents than the cap do not hide a group."""
+        monkeypatch.setattr("dupfinder.equivalence.MAX_SHARED_DOCUMENTS", 2)
+        v2 = list(WORDS)
+        v2[100] = "changed"
+        v3 = list(WORDS)
+        v3[200] = "edited"
+        v4 = list(WORDS)
+        v4[300] = "revised"
+        make_docx(tmp_path / "a.docx", _paragraphs(WORDS))
+        make_docx(tmp_path / "b.docx", _paragraphs(WORDS), bold=True)
+        make_docx(tmp_path / "c.docx", _paragraphs(WORDS), author="Rui")
+        make_docx(tmp_path / "d.docx", _paragraphs(v2))
+        make_docx(tmp_path / "e.docx", _paragraphs(v3))
+        make_docx(tmp_path / "f.docx", _paragraphs(v4))
+
+        _, equivalents = _find(tmp_path, {3})
+
+        assert _names(equivalents) == [["a.docx", "b.docx", "c.docx", "d.docx", "e.docx", "f.docx"]]
+        assert equivalents[0].similarity[tmp_path / "b.docx"] == 1.0
 
     def test_invalid_threshold(self):
         """Thresholds outside (0, 1] are rejected."""

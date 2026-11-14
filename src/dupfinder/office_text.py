@@ -168,11 +168,18 @@ def _cell_value(cell: ElementTree.Element, shared: list[str]) -> str:
             return shared[int(value.text)]
         except (ValueError, IndexError):
             return ""
+    if cell_type == "b":
+        # Booleans are stored as 1/0 but are not the numbers 1 and 0
+        return "TRUE" if value.text.strip() == "1" else "FALSE"
     return value.text
 
 
 def _xlsx_lines(package: zipfile.ZipFile) -> Iterator[str]:
-    """Yield the sheet names and non-empty rows of a workbook."""
+    """Yield the non-empty rows of a workbook, each sheet preceded by its name.
+
+    Sheet names are only emitted for sheets with content, so a workbook of empty sheets
+    yields nothing.
+    """
     shared = _shared_strings(package)
     sheets = _ordered_parts(
         package, "xl/workbook.xml", f"{_S}sheet", re.compile(r"xl/worksheets/sheet\d+\.xml")
@@ -181,11 +188,16 @@ def _xlsx_lines(package: zipfile.ZipFile) -> Iterator[str]:
         data = read_part(package, part)
         if data is None:
             continue
-        yield f"# {name}"
+        header_pending = True
         for _, element in ElementTree.iterparse(io.BytesIO(data), events=("end",)):
             if element.tag == f"{_S}row":
                 values = [_cell_value(cell, shared) for cell in element.iter(f"{_S}c")]
-                yield " ".join(v for v in values if v)
+                line = _normalize(" ".join(v for v in values if v))
+                if line:
+                    if header_pending:
+                        yield f"# {name}"
+                        header_pending = False
+                    yield line
                 element.clear()
 
 
@@ -227,8 +239,4 @@ def extract_text(filepath: Path) -> str | None:
         logger.warning(f"Cannot extract text from {filepath}: {e}")
         return None
 
-    text = "\n".join(line for line in lines if line)
-    # A workbook with empty sheets still yields its sheet names; that is not content
-    if not any(not line.startswith("# ") for line in text.splitlines()):
-        return None
-    return text
+    return "\n".join(line for line in lines if line) or None

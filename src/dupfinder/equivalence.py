@@ -39,7 +39,8 @@ DEFAULT_SIMILARITY_THRESHOLD = 0.9
 SHINGLE_WORDS = 4
 # Each document is summarized by its smallest shingle hashes (bottom-k sketch)
 SKETCH_SIZE = 256
-# Shingles shared by more documents than this are too common to suggest candidate pairs
+# A shingle shared by more documents than this is not expanded into every pair of them;
+# only documents adjacent in path order are compared, which bounds the work
 MAX_SHARED_DOCUMENTS = 1000
 
 _WORD = re.compile(r"\w+")
@@ -340,8 +341,9 @@ class EquivalenceFinder:
     def _group_similar(self, sketches: dict[Path, tuple[int, ...]]) -> list[EquivalentGroup]:
         """Group documents of the same type whose text similarity reaches the threshold.
 
-        Candidate pairs come from an inverted index of sketch hashes, so documents with
-        nothing in common are never compared. Pairs are merged transitively.
+        Documents with identical sketches are merged directly. Candidate pairs for the
+        others come from an inverted index of sketch hashes, so documents with nothing in
+        common are never compared. Pairs are merged transitively.
 
         Args:
             sketches: Sketch of each document with text
@@ -350,19 +352,6 @@ class EquivalenceFinder:
             Groups with at least two files, with each file's similarity to the first one
         """
         files = sorted(sketches, key=str)
-        index: dict[tuple[str, int], list[int]] = defaultdict(list)
-        for position, filepath in enumerate(files):
-            suffix = filepath.suffix.lower()
-            for value in sketches[filepath]:
-                index[(suffix, value)].append(position)
-
-        shared_counts: Counter[tuple[int, int]] = Counter()
-        for positions in index.values():
-            if 1 < len(positions) <= MAX_SHARED_DOCUMENTS:
-                for i, first in enumerate(positions):
-                    for second in positions[i + 1 :]:
-                        shared_counts[(first, second)] += 1
-
         parent = list(range(len(files)))
 
         def root(position: int) -> int:
@@ -371,13 +360,40 @@ class EquivalenceFinder:
                 position = parent[position]
             return position
 
+        # Documents with the same sketch need no comparison; one of them stands for all
+        first_with_sketch: dict[tuple[str, tuple[int, ...]], int] = {}
+        index: dict[tuple[str, int], list[int]] = defaultdict(list)
+        for position, filepath in enumerate(files):
+            suffix = filepath.suffix.lower()
+            first = first_with_sketch.setdefault((suffix, sketches[filepath]), position)
+            if first != position:
+                parent[position] = first
+                continue
+            for value in sketches[filepath]:
+                index[(suffix, value)].append(position)
+
+        shared_counts: Counter[tuple[int, int]] = Counter()
+        neighbours: set[tuple[int, int]] = set()
+        for positions in index.values():
+            if len(positions) > MAX_SHARED_DOCUMENTS:
+                neighbours.update(zip(positions, positions[1:]))
+            else:
+                for i, first in enumerate(positions):
+                    for second in positions[i + 1 :]:
+                        shared_counts[(first, second)] += 1
+
+        candidates = set(neighbours)
         for (first, second), shared in shared_counts.items():
             sketch_a, sketch_b = sketches[files[first]], sketches[files[second]]
             # The similarity cannot exceed the shared fraction of the larger sketch
-            needed = math.ceil(self.similarity_threshold * max(len(sketch_a), len(sketch_b)))
-            if shared < needed:
+            if shared >= math.ceil(self.similarity_threshold * max(len(sketch_a), len(sketch_b))):
+                candidates.add((first, second))
+
+        for first, second in sorted(candidates):
+            if root(first) == root(second):
                 continue
-            if sketch_similarity(sketch_a, sketch_b) >= self.similarity_threshold:
+            similarity = sketch_similarity(sketches[files[first]], sketches[files[second]])
+            if similarity >= self.similarity_threshold:
                 parent[root(first)] = root(second)
 
         clusters: dict[int, list[Path]] = defaultdict(list)
