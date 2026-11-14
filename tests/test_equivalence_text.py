@@ -148,7 +148,7 @@ class TestExtractText:
         renumbered = book(tmp_path / "b.xlsx", 5)
         different = book(tmp_path / "c.xlsx", 0, master="A1*3")
 
-        assert extract_text(first) == f"{M}#\n{M}=A1*2\n{M}=shared(A1*2)"
+        assert extract_text(first) == f"{M}#\n\t{M}=A1*2\n\t{M}=shared(A1*2)"
         assert extract_text(renumbered) == extract_text(first)
         assert extract_text(different) != extract_text(first)
 
@@ -189,6 +189,63 @@ class TestExtractText:
             )
         assert extract_text(literal) == f"{M}#\n=1+1"
         assert extract_text(formula) == f"{M}#\n{M}=1+1"
+
+    def test_xlsx_positions_are_kept(self, tmp_path):
+        """A value moved to another column or row gives different text."""
+        s = "http://schemas.openxmlformats.org/spreadsheetml/2006/main"
+
+        def book(path, row, cell):
+            with zipfile.ZipFile(path, "w") as package:
+                package.writestr(
+                    "xl/worksheets/sheet1.xml",
+                    f'<worksheet xmlns="{s}"><sheetData><row r="{row}"><c r="{cell}{row}" '
+                    't="inlineStr"><is><t>x</t></is></c></row></sheetData></worksheet>',
+                )
+            return path
+
+        a1 = book(tmp_path / "a1.xlsx", 1, "A")
+        b1 = book(tmp_path / "b1.xlsx", 1, "B")
+        a3 = book(tmp_path / "a3.xlsx", 3, "A")
+        aa1 = book(tmp_path / "aa1.xlsx", 1, "AA")
+
+        assert extract_text(a1) == f"{M}#\nx"
+        assert extract_text(b1) == f"{M}#\n\tx"
+        assert extract_text(a3) == f"{M}#\n{M}row 3\nx"
+        assert extract_text(aa1) == f"{M}#\n" + "\t" * 26 + "x"
+
+    def test_docx_notes_follow_body_references(self, tmp_path):
+        """Footnotes are placed where the body refers to them."""
+        w = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+
+        def document(path, first, second, ids=("1", "2")):
+            with zipfile.ZipFile(path, "w") as package:
+                package.writestr(
+                    "word/document.xml",
+                    f'<w:document xmlns:w="{w}"><w:body>'
+                    f'<w:p><w:r><w:t>Alpha</w:t></w:r><w:r><w:footnoteReference w:id="{first}"/>'
+                    "</w:r></w:p>"
+                    f'<w:p><w:r><w:t>Beta</w:t></w:r><w:r><w:footnoteReference w:id="{second}"/>'
+                    "</w:r></w:p></w:body></w:document>",
+                )
+                package.writestr(
+                    "word/footnotes.xml",
+                    f'<w:footnotes xmlns:w="{w}">'
+                    '<w:footnote w:type="separator" w:id="-1"><w:p><w:r><w:t>sep</w:t></w:r>'
+                    "</w:p></w:footnote>"
+                    f'<w:footnote w:id="{ids[0]}"><w:p><w:r><w:t>Note one</w:t></w:r></w:p>'
+                    "</w:footnote>"
+                    f'<w:footnote w:id="{ids[1]}"><w:p><w:r><w:t>Note two</w:t></w:r></w:p>'
+                    "</w:footnote></w:footnotes>",
+                )
+            return path
+
+        normal = document(tmp_path / "a.docx", "1", "2")
+        swapped = document(tmp_path / "b.docx", "2", "1")
+        renumbered = document(tmp_path / "c.docx", "7", "9", ids=("7", "9"))
+
+        assert extract_text(normal) == (f"Alpha {M}footnote(Note one)\nBeta {M}footnote(Note two)")
+        assert extract_text(swapped) != extract_text(normal)
+        assert extract_text(renumbered) == extract_text(normal)
 
     def test_docx_headers_follow_section_references(self, tmp_path):
         """Headers are read through the section references, not by part name."""

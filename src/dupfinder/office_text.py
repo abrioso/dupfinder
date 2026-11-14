@@ -31,6 +31,15 @@ _REL = "{http://schemas.openxmlformats.org/package/2006/relationships}"
 STRUCTURE = "\x01"
 
 _HEADER_FOOTER_REFERENCES = {f"{_W}headerReference": "header", f"{_W}footerReference": "footer"}
+_NOTE_REFERENCES = {f"{_W}footnoteReference": "footnote", f"{_W}endnoteReference": "endnote"}
+_NOTE_PARTS = {
+    "footnote": ("word/footnotes.xml", f"{_W}footnote"),
+    "endnote": ("word/endnotes.xml", f"{_W}endnote"),
+}
+# Notes that Word generates to draw separators; they are not document text
+_SEPARATOR_NOTE_TYPES = {"separator", "continuationSeparator", "continuationNotice"}
+_WORD_BREAKS = {f"{_W}tab", f"{_W}br", f"{_W}cr"}
+_CELL_COLUMN = re.compile(r"([A-Za-z]+)\d*")
 
 _WHITESPACE = re.compile(r"\s+")
 _NUMBER = re.compile(r"(\d+)")
@@ -41,10 +50,14 @@ def _natural_key(name: str) -> list[int | str]:
     return [int(piece) if piece.isdigit() else piece for piece in _NUMBER.split(name)]
 
 
+def _collapse(line: str) -> str:
+    """Normalize the Unicode form and the whitespace of a line, keeping structure marks."""
+    return _WHITESPACE.sub(" ", unicodedata.normalize("NFC", line)).strip()
+
+
 def _normalize(line: str) -> str:
-    """Normalize Unicode form and whitespace of a line of text."""
-    text = unicodedata.normalize("NFC", line).replace(STRUCTURE, "")
-    return _WHITESPACE.sub(" ", text).strip()
+    """Normalize a line of document content, which can never carry structure marks."""
+    return _collapse(line.replace(STRUCTURE, ""))
 
 
 def _paragraphs(
@@ -53,6 +66,7 @@ def _paragraphs(
     paragraph_tag: str,
     break_tags: set[str],
     references: list[tuple[str, str, str]] | None = None,
+    notes: dict[str, dict[str, str]] | None = None,
 ) -> list[str]:
     """Extract one line per paragraph from a WordprocessingML or DrawingML part.
 
@@ -63,6 +77,8 @@ def _paragraphs(
         break_tags: Qualified tags rendered as a space (tabs, line breaks)
         references: When given, receives the header and footer references found, in
             document order, as (kind, type, relationship id)
+        notes: When given, footnote and endnote texts by kind and id; each one is placed
+            where the body refers to it and removed from the mapping
 
     Returns:
         Normalized, non-empty text of each paragraph, in document order
@@ -72,13 +88,18 @@ def _paragraphs(
     for _, element in ElementTree.iterparse(io.BytesIO(data), events=("end",)):
         tag = element.tag
         if tag == text_tag:
-            buffer.append(element.text or "")
+            buffer.append((element.text or "").replace(STRUCTURE, ""))
         elif tag in break_tags:
             buffer.append(" ")
         elif tag == paragraph_tag:
-            lines.append(_normalize("".join(buffer)))
+            lines.append(_collapse("".join(buffer)))
             buffer.clear()
             element.clear()
+        elif notes is not None and tag in _NOTE_REFERENCES:
+            kind = _NOTE_REFERENCES[tag]
+            text = notes[kind].pop(element.get(f"{_W}id", ""), "")
+            if text:
+                buffer.append(f" {STRUCTURE}{kind}({text}) ")
         elif references is not None and tag in _HEADER_FOOTER_REFERENCES:
             references.append(
                 (
@@ -88,7 +109,7 @@ def _paragraphs(
                 )
             )
     if buffer:
-        lines.append(_normalize("".join(buffer)))
+        lines.append(_collapse("".join(buffer)))
     return [line for line in lines if line]
 
 
@@ -147,23 +168,60 @@ def _ordered_parts(
     return ordered
 
 
+def _docx_notes(package: zipfile.ZipFile, kind: str) -> dict[str, str]:
+    """Read the footnotes or endnotes of a Word document.
+
+    Args:
+        package: Open Office document
+        kind: 'footnote' or 'endnote'
+
+    Returns:
+        Text of each note by id, in part order, without the separator notes
+    """
+    part, note_tag = _NOTE_PARTS[kind]
+    data = read_part(package, part)
+    if data is None:
+        return {}
+
+    notes: dict[str, str] = {}
+    lines: list[str] = []
+    buffer: list[str] = []
+    for _, element in ElementTree.iterparse(io.BytesIO(data), events=("end",)):
+        tag = element.tag
+        if tag == f"{_W}t":
+            buffer.append((element.text or "").replace(STRUCTURE, ""))
+        elif tag in _WORD_BREAKS:
+            buffer.append(" ")
+        elif tag == f"{_W}p":
+            lines.append(_collapse("".join(buffer)))
+            buffer.clear()
+        elif tag == note_tag:
+            text = " ".join(line for line in lines if line)
+            if text and element.get(f"{_W}type") not in _SEPARATOR_NOTE_TYPES:
+                notes[element.get(f"{_W}id", "")] = text
+            lines.clear()
+            element.clear()
+    return notes
+
+
 def _docx_lines(package: zipfile.ZipFile) -> Iterator[str]:
     """Yield the paragraphs of a Word document, including notes, headers and footers.
 
-    Headers and footers follow the section references of the document, so the same parts
-    assigned to different sections give different text. Parts that no section references
-    are not rendered by Word and are left out.
+    Footnotes and endnotes are placed where the body refers to them, and headers and
+    footers follow the section references, so the same parts attached to different
+    passages or sections give different text. Header and footer parts that no section
+    references are not rendered by Word and are left out.
     """
-    tags = (f"{_W}t", f"{_W}p", {f"{_W}tab", f"{_W}br", f"{_W}cr"})
+    tags = (f"{_W}t", f"{_W}p", _WORD_BREAKS)
     references: list[tuple[str, str, str]] = []
+    notes = {kind: _docx_notes(package, kind) for kind in _NOTE_PARTS}
     data = read_part(package, "word/document.xml")
     if data is not None:
-        yield from _paragraphs(data, *tags, references=references)
+        yield from _paragraphs(data, *tags, references=references, notes=notes)
 
-    for part in ("word/footnotes.xml", "word/endnotes.xml"):
-        data = read_part(package, part)
-        if data is not None:
-            yield from _paragraphs(data, *tags)
+    # Notes the body never refers to are kept, after the body, so no text is lost
+    for remaining in notes.values():
+        yield from remaining.values()
 
     targets = _relationships(package, "word/document.xml") if references else {}
     for kind, reference_type, relationship_id in references:
@@ -232,12 +290,34 @@ def _cell_value(cell: ElementTree.Element, shared: list[str], formulas: dict[str
     return _normalize(value.text)
 
 
+def _column_index(reference: str | None) -> int | None:
+    """Convert a cell reference such as 'C7' into a zero-based column index.
+
+    Args:
+        reference: Cell reference, or None when the cell has none
+
+    Returns:
+        Column index, or None when the reference cannot be read
+    """
+    match = _CELL_COLUMN.fullmatch(reference or "")
+    if match is None:
+        return None
+    index = 0
+    for letter in match.group(1).upper():
+        index = index * 26 + ord(letter) - ord("A") + 1
+    return index - 1
+
+
 def _xlsx_lines(package: zipfile.ZipFile) -> Iterator[str]:
     """Yield the non-empty rows of a workbook, each sheet preceded by its name.
 
     Sheet names are only emitted for sheets with content, so a workbook of empty sheets
     yields nothing. Sheet names carry the structure marker and the cells of a row are
     separated by tabs, so cell text cannot imitate a sheet boundary or a cell boundary.
+
+    Positions are kept: empty cells before a value leave empty fields, and a row that does
+    not directly follow the previous one is preceded by a mark with its number. Positions
+    are relative, so inserting a row changes one mark instead of every following row.
     """
     shared = _shared_strings(package)
     sheets = _ordered_parts(
@@ -248,17 +328,32 @@ def _xlsx_lines(package: zipfile.ZipFile) -> Iterator[str]:
         if data is None:
             continue
         header_pending = True
+        previous_row = 0
         formulas: dict[str, str] = {}
         for _, element in ElementTree.iterparse(io.BytesIO(data), events=("end",)):
-            if element.tag == f"{_S}row":
-                values = [_cell_value(cell, shared, formulas) for cell in element.iter(f"{_S}c")]
-                line = "\t".join(v for v in values if v)
-                if line:
-                    if header_pending:
-                        yield f"{STRUCTURE}# {_normalize(name)}".rstrip()
-                        header_pending = False
-                    yield line
-                element.clear()
+            if element.tag != f"{_S}row":
+                continue
+            cells: dict[int, str] = {}
+            next_column = 0
+            for cell in element.iter(f"{_S}c"):
+                column = _column_index(cell.get("r"))
+                if column is None:
+                    column = next_column
+                next_column = column + 1
+                value = _cell_value(cell, shared, formulas)
+                if value:
+                    cells[column] = value
+            if cells:
+                if header_pending:
+                    yield f"{STRUCTURE}# {_normalize(name)}".rstrip()
+                    header_pending = False
+                number = element.get("r", "")
+                row = int(number) if number.isdigit() else previous_row + 1
+                if row != previous_row + 1:
+                    yield f"{STRUCTURE}row {row}"
+                previous_row = row
+                yield "\t".join(cells.get(i, "") for i in range(max(cells) + 1))
+            element.clear()
 
 
 def _pptx_lines(package: zipfile.ZipFile) -> Iterator[str]:
