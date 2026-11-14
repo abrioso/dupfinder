@@ -105,6 +105,24 @@ class TestPackageSignature:
 
         assert package_signature(paths[0]) == package_signature(paths[1])
 
+    def test_relationship_target_spellings_are_equivalent(self, tmp_path):
+        """'./x', '/x' and 'x' targets name the same part."""
+        signatures = set()
+        for name, prefix, author in (("a", "", "Ana"), ("b", "./", "Rui"), ("c", "/", "Eva")):
+            path = self._package(
+                tmp_path / f"{name}.docx",
+                f"{prefix}word/document.xml",
+                extra_rel='<Relationship Id="rId9" '
+                'Type="http://x/relationships/metadata/core-properties" '
+                f'Target="{prefix}docProps/core.xml"/>',
+                extra_type='<Override PartName="/docProps/core.xml" ContentType="x/core"/>',
+            )
+            with zipfile.ZipFile(path, "a") as package:
+                package.writestr("docProps/core.xml", f"<p>{author}</p>")
+            signatures.add(package_signature(path))
+
+        assert len(signatures) == 1
+
     def test_document_part_under_docprops_is_content(self, tmp_path):
         """A main document stored under docProps/ is content, not metadata."""
         paths = []
