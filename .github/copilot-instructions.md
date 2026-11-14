@@ -22,6 +22,9 @@ dupfinder/
 │   ├── __main__.py         # Entry point for python -m dupfinder
 │   ├── cli.py              # Command-line interface and argument parsing
 │   ├── scanner.py          # Core duplicate detection logic
+│   ├── equivalence.py      # Equivalent Office documents (levels 1-3, never deleted)
+│   ├── office.py           # Office Open XML helpers and document properties
+│   ├── office_text.py      # Text extraction from .docx/.xlsx/.pptx
 │   └── formatters.py       # Output formatting (JSON, CSV, table)
 ├── tests/                  # Test suite
 │   ├── test_cli.py         # CLI tests

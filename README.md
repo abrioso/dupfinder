@@ -13,6 +13,10 @@ A cross-platform CLI tool to find duplicate files using chunked hashing (BLAKE2/
 - 🎨 **Multiple output formats** - JSON, CSV, or human-readable table
 - 🛡️ **Flexible filtering** - Exclude patterns, .gitignore support, size filters
 - 🔗 **Safe operations** - Dry-run mode for delete/hardlink operations
+- 📌 **Reference directories and keep policies** - Choose which copy is kept
+- 📄 **Equivalent Office documents** - Optional report of `.docx`/`.xlsx`/`.pptx` files with
+  the same content, the same text or similar text (never deleted)
+- 🕒 **Timestamps** - File and in-document modification times in every output
 - ⚡ **Multi-threaded** - Parallel file hashing for better performance
 - 🌍 **Cross-platform** - Works on macOS, Linux, and Windows
 - 📝 **Type hints & docstrings** - Fully typed and documented codebase
@@ -154,17 +158,37 @@ labelled `ficheiro equivalente - nível X (validar)`.
 | Flag | Level | Finds |
 |---|---|---|
 | `--equiv-package` | 1 | Same content parts, different metadata or compression |
+| `--equiv-text` | 2 | Same text, different formatting |
+| `--equiv-similar` | 3 | Similar text, such as successive versions of a document |
 
 ```bash
-dupfinder ~/Documents --equiv-package --output csv --output-file report.csv
+# All three levels, written to a CSV report
+dupfinder ~/Documents --equiv-package --equiv-text --equiv-similar \
+  --output csv --output-file report.csv
+
+# Level 3 only, with a looser threshold (default: 0.9)
+dupfinder ~/Documents --equiv-similar --similarity-threshold 0.8
 ```
 
-Level 1 reads only the ZIP directory of each file (name, CRC and size of each part) and
-ignores `docProps/`, so it adds almost no scan time.
+How each level works:
+
+- **Level 1** reads only the ZIP directory of each file (name, CRC and size of each part)
+  and ignores `docProps/`, so it adds almost no scan time.
+- **Level 2** extracts the text and compares its hash. Word text includes notes, headers
+  and footers; PowerPoint text includes speaker notes; Excel text is the sheet names and
+  cells in order, with formulas reported instead of their cached results, so two workbooks
+  with the same values but different formulas are *not* level 2.
+- **Level 3** compares overlapping sequences of four words and groups documents of the
+  same type whose similarity reaches the threshold. Each file shows its similarity to the
+  first file of the group. For long documents the similarity is an estimate (about ±0.03),
+  so pairs very close to the threshold may fall on either side of it.
 
 Exact duplicates are represented by the file to keep, and a pair of files is reported
-only once, at the lowest level where it matches. Legacy formats (`.doc`, `.xls`, `.ppt`)
-and password-protected files are skipped and logged.
+only once, at the lowest requested level where it matches. Legacy formats (`.doc`, `.xls`,
+`.ppt`) and password-protected files are skipped and logged.
+
+Indicative cost on 2,000 Word documents of 3,000 words each (87 MB): 0.2 s for exact
+duplicates only, plus about 0.4 s for level 1, 3 s for level 2 and 8 s for level 3.
 
 ### Actions
 
