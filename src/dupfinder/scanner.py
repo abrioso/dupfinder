@@ -517,7 +517,9 @@ class DuplicateFinder:
                     try:
                         # Create hardlink with temporary name
                         temp_path = filepath.with_suffix(filepath.suffix + f".tmp.{os.getpid()}")
-                        os.link(original, temp_path)
+                        # Link to the real file: if the kept file is a symlink, linking it
+                        # as written would turn the duplicate into another symlink
+                        os.link(self._resolve(original), temp_path)
                         # Atomically replace the original file
                         temp_path.replace(filepath)
                         logger.info(f"Hardlinked: {filepath} -> {original}")

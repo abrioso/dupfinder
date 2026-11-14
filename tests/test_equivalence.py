@@ -80,12 +80,48 @@ class TestPackageSignature:
         b = self._package(
             tmp_path / "b.docx",
             "word/document.xml",
-            extra_rel='<Relationship Id="rId9" Type="custom-properties" '
+            extra_rel='<Relationship Id="rId9" '
+            'Type="http://x/relationships/custom-properties" '
             'Target="docProps/custom.xml"/>',
             extra_type='<Override PartName="/docProps/custom.xml" ContentType="x/custom"/>',
         )
 
         assert package_signature(a) == package_signature(b)
+
+    def test_metadata_part_content_is_ignored_when_declared(self, tmp_path):
+        """A declared properties part may differ without changing the signature."""
+        paths = []
+        for name, props in (("a.docx", "<p>Ana</p>"), ("b.docx", "<p>Rui</p>")):
+            path = self._package(
+                tmp_path / name,
+                "word/document.xml",
+                extra_rel='<Relationship Id="rId9" '
+                'Type="http://x/relationships/metadata/core-properties" '
+                'Target="docProps/core.xml"/>',
+            )
+            with zipfile.ZipFile(path, "a") as package:
+                package.writestr("docProps/core.xml", props)
+            paths.append(path)
+
+        assert package_signature(paths[0]) == package_signature(paths[1])
+
+    def test_document_part_under_docprops_is_content(self, tmp_path):
+        """A main document stored under docProps/ is content, not metadata."""
+        paths = []
+        for name, body in (
+            ("a.docx", "<document>one</document>"),
+            ("b.docx", "<document>2</document>"),
+        ):
+            path = self._package(tmp_path / name, "docProps/main.xml")
+            with zipfile.ZipFile(path, "a") as package:
+                package.writestr("docProps/main.xml", body)
+            paths.append(path)
+        other_target = self._package(tmp_path / "c.docx", "docProps/other.xml")
+        with zipfile.ZipFile(other_target, "a") as package:
+            package.writestr("docProps/main.xml", "<document>one</document>")
+
+        assert package_signature(paths[0]) != package_signature(paths[1])
+        assert package_signature(paths[0]) != package_signature(other_target)
 
     def test_content_type_change_changes_signature(self, tmp_path):
         """A different content type for a content part changes the signature."""
