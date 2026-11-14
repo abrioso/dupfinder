@@ -159,7 +159,7 @@ class TestExtractText:
         book = make_xlsx(tmp_path / "a.xlsx", {"S": [["# note"]]})
 
         assert extract_text(doc) == "# Introduction\n# Summary"
-        assert extract_text(deck) == "# Title"
+        assert extract_text(deck) == f"{M}slide\n# Title"
         assert extract_text(book) == f"{M}# S\n# note"
 
     def test_xlsx_structure_cannot_be_imitated_by_cell_text(self, tmp_path):
@@ -299,7 +299,7 @@ class TestExtractText:
         """Presentation text follows the slide order of the presentation part."""
         path = make_pptx(tmp_path / "a.pptx", [["Title", "Subtitle"], ["Second slide"]])
 
-        assert extract_text(path) == "Title\nSubtitle\nSecond slide"
+        assert extract_text(path) == f"{M}slide\nTitle\nSubtitle\n{M}slide\nSecond slide"
 
     def test_pptx_notes_follow_slide_order(self, tmp_path):
         """Speaker notes are ordered by their slides, not by their part names."""
@@ -326,8 +326,22 @@ class TestExtractText:
         natural = deck(tmp_path / "a.pptx", (1, "note one"), (2, "note two"))
         swapped = deck(tmp_path / "b.pptx", (2, "note one"), (1, "note two"))
 
-        assert extract_text(natural) == "First\nSecond\nnote one\nnote two"
+        assert extract_text(natural) == (
+            f"{M}slide\nFirst\n{M}notes\nnote one\n{M}slide\nSecond\n{M}notes\nnote two"
+        )
         assert extract_text(swapped) == extract_text(natural)
+
+    def test_pptx_slide_boundaries_are_kept(self, tmp_path):
+        """The same paragraphs spread over the slides differently give different text."""
+        one_slide = make_pptx(tmp_path / "a.pptx", [["A", "B"]])
+        two_slides = make_pptx(tmp_path / "b.pptx", [["A"], ["B"]])
+        with_gap = make_pptx(tmp_path / "c.pptx", [["A"], [], ["B"]])
+        only_empty = make_pptx(tmp_path / "d.pptx", [[], []])
+
+        assert extract_text(one_slide) == f"{M}slide\nA\nB"
+        assert extract_text(two_slides) == f"{M}slide\nA\n{M}slide\nB"
+        assert extract_text(with_gap) == f"{M}slide\nA\n{M}slide after 1 empty\nB"
+        assert extract_text(only_empty) is None
 
     def test_no_text(self, tmp_path):
         """Documents without text, other types and broken files yield None."""

@@ -357,26 +357,52 @@ def _xlsx_lines(package: zipfile.ZipFile) -> Iterator[str]:
 
 
 def _pptx_lines(package: zipfile.ZipFile) -> Iterator[str]:
-    """Yield the paragraphs of a presentation: slides in order, then speaker notes."""
+    """Yield the paragraphs of a presentation, slide by slide, with speaker notes.
+
+    Each slide with text starts with a mark, so the same paragraphs spread over the slides
+    differently give different text. Slides without text are counted in the next mark.
+    The notes of a slide follow it, found through the slide's relationships because their
+    part names are internal identifiers that do not follow the slide order.
+    """
     slides = _ordered_parts(
         package, "ppt/presentation.xml", f"{_P}sldId", re.compile(r"ppt/slides/slide\d+\.xml")
     )
     notes = re.compile(r"ppt/notesSlides/notesSlide\d+\.xml")
-    parts = [part for _, part in slides]
-    # Notes follow the order of their slides: their part names are internal identifiers
-    # that do not change when slides are reordered
-    ordered_notes: list[str] = []
-    for part in parts:
-        for target in _relationships(package, part).values():
-            if notes.fullmatch(target) and target not in ordered_notes:
-                ordered_notes.append(target)
-    names = sorted(package.namelist(), key=_natural_key)
-    ordered_notes += [n for n in names if notes.fullmatch(n) and n not in ordered_notes]
-    parts += [n for n in ordered_notes if n in names]
-    for part in parts:
+    tags = (f"{_A}t", f"{_A}p", {f"{_A}br"})
+    names = set(package.namelist())
+    seen_notes: set[str] = set()
+
+    def notes_lines(part: str) -> Iterator[str]:
+        seen_notes.add(part)
         data = read_part(package, part)
-        if data is not None:
-            yield from _paragraphs(data, f"{_A}t", f"{_A}p", {f"{_A}br"})
+        lines = _paragraphs(data, *tags) if data is not None else []
+        if lines:
+            yield f"{STRUCTURE}notes"
+            yield from lines
+
+    empty_slides = 0
+    for _, part in slides:
+        data = read_part(package, part)
+        lines = _paragraphs(data, *tags) if data is not None else []
+        slide_notes = [
+            target
+            for target in _relationships(package, part).values()
+            if notes.fullmatch(target) and target in names and target not in seen_notes
+        ]
+        following = [line for target in slide_notes for line in notes_lines(target)]
+        if not lines and not following:
+            empty_slides += 1
+            continue
+        mark = f"{STRUCTURE}slide"
+        yield f"{mark} after {empty_slides} empty" if empty_slides else mark
+        empty_slides = 0
+        yield from lines
+        yield from following
+
+    # Notes that no slide refers to are kept at the end, so no text is lost
+    for part in sorted(names, key=_natural_key):
+        if notes.fullmatch(part) and part not in seen_notes:
+            yield from notes_lines(part)
 
 
 _EXTRACTORS = {".docx": _docx_lines, ".xlsx": _xlsx_lines, ".pptx": _pptx_lines}

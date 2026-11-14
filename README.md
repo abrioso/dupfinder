@@ -176,7 +176,7 @@ How each level works:
   and ignores `docProps/`, so it adds almost no scan time.
 - **Level 2** extracts the text and compares its hash. Word text includes footnotes and
   endnotes where the body refers to them, and the headers and footers each section uses;
-  PowerPoint text includes speaker notes in slide order; Excel text is the sheet names
+  PowerPoint text is kept slide by slide, each with its speaker notes; Excel text is the sheet names
   and cells in order, with formulas reported instead of their cached results, so two
   workbooks with the same values but different formulas are *not* level 2. Sheet, cell
   and formula boundaries and cell positions are part of what is compared, so a value
