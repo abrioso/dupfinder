@@ -165,6 +165,34 @@ class TestExtractText:
 
         assert extract_text(path) == "Title\nSubtitle\nSecond slide"
 
+    def test_pptx_notes_follow_slide_order(self, tmp_path):
+        """Speaker notes are ordered by their slides, not by their part names."""
+        rel = "http://schemas.openxmlformats.org/package/2006/relationships"
+        a_ns = "http://schemas.openxmlformats.org/drawingml/2006/main"
+
+        def deck(path, note_of_first, note_of_second):
+            make_pptx(path, [["First"], ["Second"]])
+            with zipfile.ZipFile(path, "a") as package:
+                for slide, (number, text) in enumerate([note_of_first, note_of_second], 1):
+                    package.writestr(
+                        f"ppt/notesSlides/notesSlide{number}.xml",
+                        f'<p:notes xmlns:p="x" xmlns:a="{a_ns}"><a:p><a:r><a:t>{text}</a:t>'
+                        "</a:r></a:p></p:notes>",
+                    )
+                    package.writestr(
+                        f"ppt/slides/_rels/slide{slide}.xml.rels",
+                        f'<Relationships xmlns="{rel}"><Relationship Id="rId1" '
+                        f'Type="notesSlide" Target="../notesSlides/notesSlide{number}.xml"/>'
+                        "</Relationships>",
+                    )
+            return path
+
+        natural = deck(tmp_path / "a.pptx", (1, "note one"), (2, "note two"))
+        swapped = deck(tmp_path / "b.pptx", (2, "note one"), (1, "note two"))
+
+        assert extract_text(natural) == "First\nSecond\nnote one\nnote two"
+        assert extract_text(swapped) == extract_text(natural)
+
     def test_no_text(self, tmp_path):
         """Documents without text, other types and broken files yield None."""
         empty_doc = make_docx(tmp_path / "empty.docx", [])

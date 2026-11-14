@@ -225,7 +225,16 @@ def _pptx_lines(package: zipfile.ZipFile) -> Iterator[str]:
     )
     notes = re.compile(r"ppt/notesSlides/notesSlide\d+\.xml")
     parts = [part for _, part in slides]
-    parts += [n for n in sorted(package.namelist(), key=_natural_key) if notes.fullmatch(n)]
+    # Notes follow the order of their slides: their part names are internal identifiers
+    # that do not change when slides are reordered
+    ordered_notes: list[str] = []
+    for part in parts:
+        for target in _relationships(package, part).values():
+            if notes.fullmatch(target) and target not in ordered_notes:
+                ordered_notes.append(target)
+    names = sorted(package.namelist(), key=_natural_key)
+    ordered_notes += [n for n in names if notes.fullmatch(n) and n not in ordered_notes]
+    parts += [n for n in ordered_notes if n in names]
     for part in parts:
         data = read_part(package, part)
         if data is not None:
