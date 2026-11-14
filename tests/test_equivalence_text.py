@@ -126,6 +126,29 @@ class TestExtractText:
         assert extract_text(false) == "#\nFALSE"
         assert extract_text(number) == "#\n1"
 
+    def test_xlsx_shared_formula_ids_do_not_matter(self, tmp_path):
+        """Shared formulas with different group ids but the same master are the same text."""
+        s = "http://schemas.openxmlformats.org/spreadsheetml/2006/main"
+
+        def book(path, group, master="A1*2"):
+            with zipfile.ZipFile(path, "w") as package:
+                package.writestr(
+                    "xl/worksheets/sheet1.xml",
+                    f'<worksheet xmlns="{s}"><sheetData>'
+                    f'<row r="1"><c r="B1"><f t="shared" ref="B1:B2" si="{group}">{master}</f>'
+                    f'<v>2</v></c></row><row r="2"><c r="B2"><f t="shared" si="{group}"/>'
+                    "<v>4</v></c></row></sheetData></worksheet>",
+                )
+            return path
+
+        first = book(tmp_path / "a.xlsx", 0)
+        renumbered = book(tmp_path / "b.xlsx", 5)
+        different = book(tmp_path / "c.xlsx", 0, master="A1*3")
+
+        assert extract_text(first) == "#\n=A1*2\n=shared(A1*2)"
+        assert extract_text(renumbered) == extract_text(first)
+        assert extract_text(different) != extract_text(first)
+
     def test_text_starting_with_hash_is_content(self, tmp_path):
         """Documents whose every line starts with '# ' still have text."""
         doc = make_docx(tmp_path / "a.docx", ["# Introduction", "# Summary"])

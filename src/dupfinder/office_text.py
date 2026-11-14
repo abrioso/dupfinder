@@ -148,15 +148,31 @@ def _shared_strings(package: zipfile.ZipFile) -> list[str]:
     return strings
 
 
-def _cell_value(cell: ElementTree.Element, shared: list[str]) -> str:
+def _cell_value(cell: ElementTree.Element, shared: list[str], formulas: dict[str, str]) -> str:
     """Return the text of a worksheet cell.
 
     Formulas are reported instead of their cached results, so that two workbooks with the
     same visible values but different formulas are not considered to have the same text.
+
+    Args:
+        cell: Worksheet cell element
+        shared: Shared strings table of the workbook
+        formulas: Text of the shared formulas seen so far in the sheet, by group id;
+            updated when the cell is the master of a shared formula
+
+    Returns:
+        Text of the cell
     """
     formula = cell.find(f"{_S}f")
     if formula is not None:
-        return "=" + (formula.text or f"shared:{formula.get('si', '')}")
+        group = formula.get("si") if formula.get("t") == "shared" else None
+        if formula.text:
+            if group is not None:
+                formulas[group] = formula.text
+            return "=" + formula.text
+        # Follower of a shared formula: refer to the master's text, because the group
+        # identifier is an arbitrary number that differs between saves
+        return f"=shared({formulas.get(group or '', '')})"
     cell_type = cell.get("t")
     if cell_type == "inlineStr":
         return "".join(t.text or "" for t in cell.iter(f"{_S}t"))
@@ -189,9 +205,10 @@ def _xlsx_lines(package: zipfile.ZipFile) -> Iterator[str]:
         if data is None:
             continue
         header_pending = True
+        formulas: dict[str, str] = {}
         for _, element in ElementTree.iterparse(io.BytesIO(data), events=("end",)):
             if element.tag == f"{_S}row":
-                values = [_cell_value(cell, shared) for cell in element.iter(f"{_S}c")]
+                values = [_cell_value(cell, shared, formulas) for cell in element.iter(f"{_S}c")]
                 line = _normalize(" ".join(v for v in values if v))
                 if line:
                     if header_pending:
