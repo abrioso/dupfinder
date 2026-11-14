@@ -143,6 +143,29 @@ dupfinder /path/to/dir --keep oldest --delete --dry-run
 
 Outputs mark each file with its role: `reference`, `keep` or `duplicate`.
 
+### Equivalent Office documents
+
+Office files (`.docx`, `.xlsx`, `.pptx`) can hold the same document without being
+byte-identical. These searches are optional and independent, and their results are
+labelled `ficheiro equivalente - nível X (validar)`.
+
+**Equivalent files are only reported. `--delete` and `--hardlink` never touch them.**
+
+| Flag | Level | Finds |
+|---|---|---|
+| `--equiv-package` | 1 | Same content parts, different metadata or compression |
+
+```bash
+dupfinder ~/Documents --equiv-package --output csv --output-file report.csv
+```
+
+Level 1 reads only the ZIP directory of each file (name, CRC and size of each part) and
+ignores `docProps/`, so it adds almost no scan time.
+
+Exact duplicates are represented by the file to keep, and a pair of files is reported
+only once, at the lowest level where it matches. Legacy formats (`.doc`, `.xls`, `.ppt`)
+and password-protected files are skipped and logged.
+
 ### Actions
 
 Delete duplicates (keeps the file selected by `--reference`/`--keep`):

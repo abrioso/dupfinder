@@ -1,6 +1,7 @@
 """Helpers for Office Open XML documents (.docx, .xlsx, .pptx)."""
 
 import logging
+import posixpath
 import zipfile
 import zlib
 from dataclasses import dataclass
@@ -56,6 +57,24 @@ def is_office_file(filepath: Path) -> bool:
     return filepath.suffix.lower() in OFFICE_EXTENSIONS
 
 
+def package_part_name(target: str) -> str:
+    """Convert a package-level relationship target into a part name.
+
+    Targets are URI references relative to the package root, so '/docProps/core.xml',
+    'docProps/core.xml' and './docProps/core.xml' all name the same part.
+
+    Args:
+        target: Target attribute of a relationship in '_rels/.rels'
+
+    Returns:
+        Part name as stored in the ZIP directory, or '' for an empty target
+    """
+    stripped = target.lstrip("/")
+    if not stripped:
+        return ""
+    return posixpath.normpath(stripped)
+
+
 def read_part(package: zipfile.ZipFile, name: str, max_size: int = MAX_PART_SIZE) -> bytes | None:
     """Read one part of an open package.
 
@@ -91,7 +110,7 @@ def _core_properties_part(package: zipfile.ZipFile) -> str:
         try:
             for relationship in ElementTree.fromstring(data):
                 if relationship.get("Type", "").endswith(_CORE_PROPERTIES_TYPE):
-                    target = relationship.get("Target", "").lstrip("/")
+                    target = package_part_name(relationship.get("Target", ""))
                     if target:
                         return target
         except XML_ERRORS:

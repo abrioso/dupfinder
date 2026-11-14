@@ -72,6 +72,24 @@ class TestCoreProperties:
 
         assert read_core_properties(path) == CoreProperties("2026-03-04T05:06:07Z", "Rui")
 
+    def test_core_properties_target_with_dot_segment(self, tmp_path):
+        """A './' relationship target still locates the properties part."""
+        import zipfile
+
+        from tests.office_samples import core_xml
+
+        path = tmp_path / "dot.docx"
+        with zipfile.ZipFile(path, "w") as package:
+            package.writestr("meta/props.xml", core_xml("2026-03-04T05:06:07Z", "Rui"))
+            package.writestr(
+                "_rels/.rels",
+                '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/'
+                'relationships"><Relationship Id="rId1" Type="http://x/metadata/core-properties" '
+                'Target="./meta/props.xml"/></Relationships>',
+            )
+
+        assert read_core_properties(path) == CoreProperties("2026-03-04T05:06:07Z", "Rui")
+
     def test_oversized_core_properties_are_not_read(self, tmp_path):
         """A properties part larger than the metadata limit is ignored."""
         import zipfile
