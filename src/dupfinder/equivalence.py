@@ -12,8 +12,9 @@ from collections.abc import Callable, Iterable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
+from xml.etree import ElementTree
 
-from dupfinder.office import is_office_file
+from dupfinder.office import is_office_file, read_part
 
 logger = logging.getLogger(__name__)
 
@@ -24,9 +25,11 @@ EQUIVALENT_LABEL = "ficheiro equivalente - nível {level} (validar)"
 
 LEGACY_EXTENSIONS = frozenset({".doc", ".xls", ".ppt"})
 
-# Parts that hold metadata or packaging plumbing rather than document content
+# Parts that hold metadata rather than document content
 _IGNORED_PART_PREFIXES = ("docProps/",)
-_IGNORED_PARTS = frozenset({"[Content_Types].xml", "_rels/.rels"})
+# Package descriptors: they say which part is the document and how parts are interpreted,
+# so they are compared after dropping their entries about the ignored metadata parts
+_DESCRIPTOR_PARTS = frozenset({"[Content_Types].xml", "_rels/.rels"})
 
 GroupOrder = Callable[[list[Path]], list[Path]]
 
@@ -53,12 +56,43 @@ class EquivalentGroup:
         return EQUIVALENT_LABEL.format(level=self.level)
 
 
+def _descriptor_entries(package: zipfile.ZipFile, name: str) -> list[str] | None:
+    """Summarize a package descriptor without its entries about metadata parts.
+
+    Args:
+        package: Open Office document
+        name: '[Content_Types].xml' or '_rels/.rels'
+
+    Returns:
+        Sorted description of the remaining entries, or None if the part cannot be parsed
+    """
+    data = read_part(package, name)
+    if data is None:
+        return None
+    try:
+        root = ElementTree.fromstring(data)
+    except ElementTree.ParseError:
+        return None
+
+    entries = []
+    for element in root:
+        # Relationship ids are arbitrary labels and may be renumbered between saves
+        attributes = {k: v for k, v in element.attrib.items() if k != "Id"}
+        location = attributes.get("PartName") or attributes.get("Target") or ""
+        if location.lstrip("/").startswith(_IGNORED_PART_PREFIXES):
+            continue
+        tag = element.tag.rpartition("}")[2]
+        entries.append(f"{tag} {sorted(attributes.items())}")
+    return sorted(entries)
+
+
 def package_signature(filepath: Path) -> str | None:
     """Compute a signature of the content parts of an Office package.
 
     The signature is built from the name, CRC and size of every part recorded in the ZIP
-    directory, so nothing is decompressed. Document properties and packaging plumbing are
-    left out, so files that differ only in metadata or compression share a signature.
+    directory, so document content is not decompressed. Document properties are left out,
+    and the two small package descriptors are compared without their entries about those
+    properties, so files that differ only in metadata or compression share a signature.
 
     Args:
         filepath: Path to the document
@@ -72,10 +106,18 @@ def package_signature(filepath: Path) -> str | None:
                 (info.filename, info.CRC, info.file_size)
                 for info in package.infolist()
                 if not info.is_dir()
-                and info.filename not in _IGNORED_PARTS
+                and info.filename not in _DESCRIPTOR_PARTS
                 and not info.filename.startswith(_IGNORED_PART_PREFIXES)
             )
-    except (OSError, zipfile.BadZipFile) as e:
+            descriptors = []
+            for name in sorted(_DESCRIPTOR_PARTS & set(package.namelist())):
+                summary = _descriptor_entries(package, name)
+                if summary is None:
+                    # Unparseable descriptor: fall back to comparing it byte for byte
+                    info = package.getinfo(name)
+                    summary = [f"raw {info.CRC} {info.file_size}"]
+                descriptors.append((name, summary))
+    except (OSError, zipfile.BadZipFile, RuntimeError) as e:
         logger.warning(
             f"Skipping {filepath}: not a readable Office package "
             f"(password-protected or corrupt?): {e}"
@@ -88,6 +130,8 @@ def package_signature(filepath: Path) -> str | None:
     hasher = hashlib.blake2b(digest_size=16)
     for name, crc, size in entries:
         hasher.update(f"{name}\0{crc}\0{size}\n".encode())
+    for name, summary in descriptors:
+        hasher.update(f"{name}\0{summary}\n".encode())
     return hasher.hexdigest()
 
 
