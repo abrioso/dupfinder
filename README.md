@@ -321,6 +321,22 @@ a1b2c3d4e5f6,/path/to/report.docx,2,keep,1536,2026-11-10T17:02:11+00:00,2026-11-
 a1b2c3d4e5f6,/path/to/copy/report.docx,2,duplicate,1536,2026-11-12T08:38:00+00:00,2026-11-10T17:02:09Z,Ana
 ```
 
+## Upgrading to 0.3.0
+
+Version 0.3.0 adds reference directories, keep policies, timestamps and the optional
+search for equivalent Office documents. It changes existing behaviour in three ways:
+
+- **Empty files are skipped by default.** `--min-size` now defaults to 1. Pass
+  `--min-size 0` to report empty files as duplicates of each other, as before.
+- **Outputs have more fields.** The CSV has new columns after `group_size`; the first
+  three columns are unchanged. JSON entries keep `hash`, `count` and `files` and gain
+  `match_type` and `details`. The table shows a role marker and timestamps under each
+  file. Scripts that read the CSV by column position beyond the third column, or that
+  parse the table, need updating.
+- **A file reached through overlapping scan paths counts once.** `dupfinder dir dir/sub`
+  no longer reports a file as a duplicate of itself. With `--follow-symlinks`, a symlink
+  and the file it points to are likewise treated as one file.
+
 ## Development
 
 ### Python support policy
