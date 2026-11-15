@@ -13,6 +13,10 @@ A cross-platform CLI tool to find duplicate files using chunked hashing (BLAKE2/
 - 🎨 **Multiple output formats** - JSON, CSV, or human-readable table
 - 🛡️ **Flexible filtering** - Exclude patterns, .gitignore support, size filters
 - 🔗 **Safe operations** - Dry-run mode for delete/hardlink operations
+- 📌 **Reference directories and keep policies** - Choose which copy is kept
+- 📄 **Equivalent Office documents** - Optional report of `.docx`/`.xlsx`/`.pptx` files with
+  the same content, the same text or similar text (never deleted)
+- 🕒 **Timestamps** - File and in-document modification times in every output
 - ⚡ **Multi-threaded** - Parallel file hashing for better performance
 - 🌍 **Cross-platform** - Works on macOS, Linux, and Windows
 - 📝 **Type hints & docstrings** - Fully typed and documented codebase
@@ -111,9 +115,87 @@ Follow symbolic links:
 dupfinder /path/to/dir --follow-symlinks
 ```
 
+Empty files are skipped by default (`--min-size` defaults to 1). Include them with:
+
+```bash
+dupfinder /path/to/dir --min-size 0
+```
+
+### Choosing which file to keep
+
+Each group lists the file to keep first. Protect whole directories with `--reference`:
+their files are always kept and are never deleted or replaced, even when several of them
+are duplicates of each other. Reference directories are scanned even if they are not
+listed as scan paths.
+
+```bash
+dupfinder ~/Downloads --reference ~/Documents/Official --delete --dry-run
+```
+
+When no reference file settles it, `--keep` picks the file to keep:
+
+| Policy | File kept |
+|---|---|
+| `first` (default) | First path in alphabetical order |
+| `oldest` | Oldest modification time |
+| `newest` | Newest modification time |
+| `shortest-path` | Least nested, then shortest path |
+
+```bash
+dupfinder /path/to/dir --keep oldest --delete --dry-run
+```
+
+Outputs mark each file with its role: `reference`, `keep` or `duplicate`.
+
+### Equivalent Office documents
+
+Office files (`.docx`, `.xlsx`, `.pptx`) can hold the same document without being
+byte-identical. These searches are optional and independent, and their results are
+labelled `ficheiro equivalente - nível X (validar)`.
+
+**Equivalent files are only reported. `--delete` and `--hardlink` never touch them.**
+
+| Flag | Level | Finds |
+|---|---|---|
+| `--equiv-package` | 1 | Same content parts, different metadata or compression |
+| `--equiv-text` | 2 | Same text, different formatting |
+| `--equiv-similar` | 3 | Similar text, such as successive versions of a document |
+
+```bash
+# All three levels, written to a CSV report
+dupfinder ~/Documents --equiv-package --equiv-text --equiv-similar \
+  --output csv --output-file report.csv
+
+# Level 3 only, with a looser threshold (default: 0.9)
+dupfinder ~/Documents --equiv-similar --similarity-threshold 0.8
+```
+
+How each level works:
+
+- **Level 1** reads only the ZIP directory of each file (name, CRC and size of each part)
+  and ignores `docProps/`, so it adds almost no scan time.
+- **Level 2** extracts the text and compares its hash. Word text includes footnotes and
+  endnotes where the body refers to them, and the headers and footers each section uses;
+  PowerPoint text is kept slide by slide, each with its speaker notes; Excel text is the sheet names
+  and cells in order, with formulas reported instead of their cached results, so two
+  workbooks with the same values but different formulas are *not* level 2. Sheet, cell
+  and formula boundaries and cell positions are part of what is compared, so a value
+  moved to another cell is a different text.
+- **Level 3** compares overlapping sequences of four words and groups documents of the
+  same type whose similarity reaches the threshold. Each file shows its similarity to the
+  first file of the group. For long documents the similarity is an estimate (about ±0.03),
+  so pairs very close to the threshold may fall on either side of it.
+
+Exact duplicates are represented by the file to keep, and a pair of files is reported
+only once, at the lowest requested level where it matches. Legacy formats (`.doc`, `.xls`,
+`.ppt`) and password-protected files are skipped and logged.
+
+Indicative cost on 2,000 Word documents of 3,000 words each (87 MB): 0.2 s for exact
+duplicates only, plus about 0.4 s for level 1, 3 s for level 2 and 8 s for level 3.
+
 ### Actions
 
-Delete duplicates (keeps first occurrence):
+Delete duplicates (keeps the file selected by `--reference`/`--keep`):
 
 ```bash
 dupfinder /path/to/dir --delete --dry-run  # Preview
@@ -176,14 +258,20 @@ dupfinder ~/media --hardlink            # Apply
 
 ## Output Examples
 
+Every output shows, for each file, its role and its file system modification time. For
+`.docx`, `.xlsx` and `.pptx` files it also shows the save time and last author recorded
+inside the document, which survive copies and downloads.
+
 ### Table format (default)
 
 ```
 Duplicate group 1 (2 files, 1.50 KB each):
 Hash: a1b2c3d4e5f6
 Wasted space: 1.50 KB
-  - /path/to/file1.txt
-  - /path/to/file2.txt
+  - /path/to/report.docx [keep]
+      modified: 2026-11-10T17:02:11+00:00 | document saved: 2026-11-10T17:02:09Z by Ana
+  - /path/to/copy/report.docx
+      modified: 2026-11-12T08:38:00+00:00 | document saved: 2026-11-10T17:02:09Z by Ana
 
 ================================================================================
 Summary:
@@ -200,8 +288,26 @@ Summary:
     "hash": "a1b2c3d4e5f6",
     "count": 2,
     "files": [
-      "/path/to/file1.txt",
-      "/path/to/file2.txt"
+      "/path/to/report.docx",
+      "/path/to/copy/report.docx"
+    ],
+    "details": [
+      {
+        "path": "/path/to/report.docx",
+        "role": "keep",
+        "size": 1536,
+        "modified": "2026-11-10T17:02:11+00:00",
+        "document_modified": "2026-11-10T17:02:09Z",
+        "document_last_modified_by": "Ana"
+      },
+      {
+        "path": "/path/to/copy/report.docx",
+        "role": "duplicate",
+        "size": 1536,
+        "modified": "2026-11-12T08:38:00+00:00",
+        "document_modified": "2026-11-10T17:02:09Z",
+        "document_last_modified_by": "Ana"
+      }
     ]
   }
 ]
@@ -210,10 +316,26 @@ Summary:
 ### CSV format
 
 ```csv
-hash,file_path,group_size
-a1b2c3d4e5f6,/path/to/file1.txt,2
-a1b2c3d4e5f6,/path/to/file2.txt,2
+hash,file_path,group_size,role,size,modified,document_modified,document_last_modified_by
+a1b2c3d4e5f6,/path/to/report.docx,2,keep,1536,2026-11-10T17:02:11+00:00,2026-11-10T17:02:09Z,Ana
+a1b2c3d4e5f6,/path/to/copy/report.docx,2,duplicate,1536,2026-11-12T08:38:00+00:00,2026-11-10T17:02:09Z,Ana
 ```
+
+## Upgrading to 0.3.0
+
+Version 0.3.0 adds reference directories, keep policies, timestamps and the optional
+search for equivalent Office documents. It changes existing behaviour in three ways:
+
+- **Empty files are skipped by default.** `--min-size` now defaults to 1. Pass
+  `--min-size 0` to report empty files as duplicates of each other, as before.
+- **Outputs have more fields.** The CSV has new columns after `group_size`; the first
+  three columns are unchanged. JSON entries keep `hash`, `count` and `files` and gain
+  `match_type` and `details`. The table shows a role marker and timestamps under each
+  file. Scripts that read the CSV by column position beyond the third column, or that
+  parse the table, need updating.
+- **A file reached through overlapping scan paths counts once.** `dupfinder dir dir/sub`
+  no longer reports a file as a duplicate of itself. With `--follow-symlinks`, a symlink
+  and the file it points to are likewise treated as one file.
 
 ## Development
 

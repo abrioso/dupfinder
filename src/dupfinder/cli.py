@@ -5,8 +5,16 @@ import logging
 import sys
 from pathlib import Path
 
+from dupfinder.equivalence import (
+    DEFAULT_SIMILARITY_THRESHOLD,
+    LEVEL_PACKAGE,
+    LEVEL_SIMILAR,
+    LEVEL_TEXT,
+    EquivalenceFinder,
+    EquivalentGroup,
+)
 from dupfinder.formatters import format_output
-from dupfinder.scanner import DuplicateFinder
+from dupfinder.scanner import KEEP_POLICIES, DuplicateFinder
 
 
 def setup_logging(verbose: bool) -> None:
@@ -73,8 +81,9 @@ def parse_args(args: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--min-size",
         type=int,
-        default=0,
-        help="Minimum file size in bytes (default: 0)",
+        default=None,
+        help="Minimum file size in bytes (default: 1, which skips empty files; use 0 to "
+        "include them)",
     )
 
     parser.add_argument(
@@ -103,11 +112,62 @@ def parse_args(args: list[str] | None = None) -> argparse.Namespace:
         help="Follow symbolic links",
     )
 
+    # Which file to keep
+    parser.add_argument(
+        "--reference",
+        action="append",
+        default=[],
+        type=Path,
+        metavar="DIR",
+        help="Reference directory: its files are always kept and never deleted or replaced "
+        "(can be specified multiple times; scanned even if not listed in paths)",
+    )
+
+    parser.add_argument(
+        "--keep",
+        choices=KEEP_POLICIES,
+        default="first",
+        help="File to keep in each group when no reference file settles it: first path in "
+        "alphabetical order, oldest or newest modification time, or shortest path "
+        "(default: first)",
+    )
+
+    # Equivalent Office documents (reported for validation, never deleted)
+    parser.add_argument(
+        "--equiv-package",
+        action="store_true",
+        help="Also report .docx/.xlsx/.pptx files with the same content parts but different "
+        "metadata or compression (level 1). Equivalent files are never deleted or hardlinked",
+    )
+
+    parser.add_argument(
+        "--equiv-text",
+        action="store_true",
+        help="Also report .docx/.xlsx/.pptx files with the same text but different "
+        "formatting (level 2)",
+    )
+
+    parser.add_argument(
+        "--equiv-similar",
+        action="store_true",
+        help="Also report .docx/.xlsx/.pptx files with similar text, such as successive "
+        "versions of a document (level 3)",
+    )
+
+    parser.add_argument(
+        "--similarity-threshold",
+        type=float,
+        default=DEFAULT_SIMILARITY_THRESHOLD,
+        metavar="RATIO",
+        help="Minimum text similarity for --equiv-similar, greater than 0 and at most 1 "
+        f"(default: {DEFAULT_SIMILARITY_THRESHOLD})",
+    )
+
     # Actions
     parser.add_argument(
         "--delete",
         action="store_true",
-        help="Delete duplicate files (keeps first occurrence)",
+        help="Delete duplicate files (keeps the file selected by --reference/--keep)",
     )
 
     parser.add_argument(
@@ -142,6 +202,25 @@ def parse_args(args: list[str] | None = None) -> argparse.Namespace:
     return parser.parse_args(args)
 
 
+def equivalence_levels(args: argparse.Namespace) -> set[int]:
+    """Collect the equivalence levels requested on the command line.
+
+    Args:
+        args: Parsed arguments
+
+    Returns:
+        Set of requested levels (empty when no equivalence search was requested)
+    """
+    levels = set()
+    if args.equiv_package:
+        levels.add(LEVEL_PACKAGE)
+    if args.equiv_text:
+        levels.add(LEVEL_TEXT)
+    if args.equiv_similar:
+        levels.add(LEVEL_SIMILAR)
+    return levels
+
+
 def main() -> int:
     """Main entry point for the CLI.
 
@@ -153,6 +232,10 @@ def main() -> int:
     logger = logging.getLogger(__name__)
 
     try:
+        # Empty files are skipped unless the size options explicitly ask for them
+        if args.min_size is None:
+            args.min_size = 0 if args.max_size == 0 else 1
+
         # Validate size arguments
         if args.min_size < 0:
             logger.error("--min-size must be non-negative")
@@ -168,6 +251,15 @@ def main() -> int:
         for path in args.paths:
             if not path.exists():
                 logger.error(f"Path does not exist: {path}")
+                return 1
+
+        if not 0 < args.similarity_threshold <= 1:
+            logger.error("--similarity-threshold must be greater than 0 and at most 1")
+            return 1
+
+        for ref in args.reference:
+            if not ref.is_dir():
+                logger.error(f"Reference path is not a directory: {ref}")
                 return 1
 
         # Check for conflicting options
@@ -187,26 +279,48 @@ def main() -> int:
             respect_gitignore=args.respect_gitignore,
             follow_symlinks=args.follow_symlinks,
             num_threads=args.threads,
+            reference_paths=args.reference,
+            keep=args.keep,
         )
 
         # Find duplicates
         logger.info("Scanning for duplicate files...")
         duplicates = finder.find_duplicates(args.paths)
 
-        if not duplicates:
+        # Find equivalent Office documents
+        levels = equivalence_levels(args)
+        equivalents: list[EquivalentGroup] = []
+        if levels:
+            logger.info("Checking Office documents for equivalence...")
+            equivalents = EquivalenceFinder(
+                levels=levels,
+                order_group=finder.order_group,
+                num_threads=args.threads,
+                similarity_threshold=args.similarity_threshold,
+            ).find(finder.scanned_files, duplicates)
+
+        if not duplicates and not equivalents:
             logger.info("No duplicates found")
             return 0
 
         # Format and output results
-        output = format_output(duplicates, format_type=args.output)
+        output = format_output(
+            duplicates,
+            format_type=args.output,
+            is_reference=finder.is_reference,
+            equivalents=equivalents,
+        )
 
         if args.output_file:
-            args.output_file.write_text(output)
+            args.output_file.write_text(output, encoding="utf-8")
             logger.info(f"Output written to {args.output_file}")
         else:
             print(output)
 
-        # Perform actions if requested
+        # Perform actions if requested. Only exact duplicates are ever passed to them.
+        if equivalents and (args.delete or args.hardlink):
+            logger.info("Equivalent files are reported for validation only and are left untouched")
+
         if args.delete:
             count = finder.delete_duplicates(duplicates, dry_run=args.dry_run)
             logger.info(f"{'Would delete' if args.dry_run else 'Deleted'} {count} duplicate files")
